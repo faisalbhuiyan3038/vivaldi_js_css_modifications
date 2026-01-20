@@ -1,0 +1,7 @@
+div.auto-hide {
+    /* zero padding */
+    grid-template-columns: 0px [content] 1fr 0px !important;
+    grid-template-rows: 0px [content] 1fr 0px !important;
+    /* for fullscreen youtube */
+    background: black !important;
+}
