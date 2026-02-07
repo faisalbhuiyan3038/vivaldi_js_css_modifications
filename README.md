@@ -2,6 +2,25 @@
 
 A collection of custom CSS and JavaScript modifications to enhance the Vivaldi browser UI and functionality.
 
+## Vivaldi Mod Managers
+1. If you're on windows, use [Vivaldi Mod Manager](https://github.com/eximido/vivaldimodmanager)
+2. If you're on linux, see [Vivaldi-Autoinject-Custom-js-ui](https://aur.archlinux.org/vivaldi-autoinject-custom-js-ui.git) for more info
+3. See also [Patching Vivaldi with batch scripts](https://forum.vivaldi.net/topic/10592/patching-vivaldi-with-batch-scripts/21?page=2) for all platform
+4. If you're on macOS use [macOS_Patch_Scripts | upviv](https://github.com/PaRr0tBoY/Vivaldi-Mods/blob/8a1e9f8a63f195f67f27ab2e5b86c4aff0081096/macOS_Patch_Scripts/upviv) as a reference for patchscript
+
+## Full Width VIvaldi mod
+1. Open `Application\*\resources\vivaldi\bundle.js` from the Vivaldi installation directory in a text editor.
+1. Find the line that a constant declaration with the value `180,`, which is the default maximum tab width. The name of the constant can change across different Vivaldi releases when the file is minified.
+1. Replace `180` with the number of pixels that you want tabs to expand horizontally to, like `4000`.
+1. Restart Vivaldi for the change to take effect.
+
+See [Aldaviva/Vivaldi customizations.md](https://gist.github.com/Aldaviva/9fbe321331b7f80786a371e0fd4bcfaf#file-bundle-js-md) for more details.
+
+## Hints
+- Allow the Developer Tools to inspect the browser chrome using the `chrome://flags/#debug-packed-apps` flag.
+- The constant is used by the `getTabConfig` method from the `TabStrip.jsx` file included in `bundle.js`.
+- `bundle.js` will be overwritten during upgrades, so you may want to develop a [program that can automatically patch this file](https://github.com/Aldaviva/VivaldiCustomLauncher).
+
 ## ✨ Features
 
 ### Functional Enhancements (JavaScript)
