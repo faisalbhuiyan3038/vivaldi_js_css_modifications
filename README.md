@@ -14,6 +14,18 @@ A collection of custom CSS and JavaScript modifications to enhance the Vivaldi b
 1. Replace `180` with the number of pixels that you want tabs to expand horizontally to, like `4000`.
 1. Restart Vivaldi for the change to take effect.
 
+## Use `update-bundle.js` for automated width change.
+- Run with path as argument.
+```bash
+node update-bundle.js ./bundle.js
+```
+
+- Using environment variable
+```bash
+BUNDLE_PATH=./bundle.js node update-bundle.js
+```
+- Change `./bundle.js` to your actual path.
+
 See [Aldaviva/Vivaldi customizations.md](https://gist.github.com/Aldaviva/9fbe321331b7f80786a371e0fd4bcfaf#file-bundle-js-md) for more details.
 
 ## Hints
