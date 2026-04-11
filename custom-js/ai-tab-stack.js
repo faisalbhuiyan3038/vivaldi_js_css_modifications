@@ -337,7 +337,7 @@
         url: 'http://localhost:11434/api/chat',
         model: 'llama3'
       },
-      promptType: 'smart_grouper', 
+      promptType: 'smart_grouper',
       includeExistingStacks: true,
       customInstructions: '',
       temperature: 0.3,
@@ -368,7 +368,7 @@ Here are the open tabs:
 {tabList}
 
 Group these {tabCount} tabs into logical categories.`,
-    
+
     smart_grouper: `As an AI assistant, analyze and organize these {tabCount} browser tabs into meaningful groups. Here are open tabs: 
 
 {tabList}
@@ -408,17 +408,18 @@ Input Tab Data:
 **CRITICAL REQUIREMENTS:**
 1. **All group names must use ${languageName} language**
 2. Tabs that cannot be grouped with any other tabs should be added to the "Others" stack (${othersName})
+3. IMPORTANT: If Custom Instructions dictate that certain tabs should be ignored, place them in a special group exactly named "_IGNORE_".
 
 **OUTPUT FORMAT:**
 Output **strictly valid JSON format only**, nothing else:
 Avoid the following:
 * Empty elements (e.g. [5, , 7])
 * Missing quotes or commas
-* tab_ids containing only single tab groups (e.g. "tab_ids": [6])
+* tab_ids containing only single tab groups (e.g. "tab_ids": [6]) unless it's the "_IGNORE_" group.
 * ***No additional explanatory text, comments, or extra content in output***
 
 **Output example (must strictly follow):**
-{ "groups": [ { "name": "Group name", "tab_ids": [0, 1, 2] }, { "name": "Group name 2", "tab_ids": [3, 4] }, { "name": "${othersName}", "tab_ids": [5, 6] } ] }
+{ "groups": [ { "name": "Group name", "tab_ids": [0, 1, 2] }, { "name": "Group name 2", "tab_ids": [3, 4] }, { "name": "${othersName}", "tab_ids": [5, 6] }, { "name": "_IGNORE_", "tab_ids": [7] } ] }
 `;
 
   // Selectors
@@ -647,15 +648,16 @@ Avoid the following:
       existingInfoText = existingStacks.map(s => s.name || 'Unnamed stack').join('\n');
     }
     const othersName = getOthersName();
-    
+
     let basePrompt = PROMPT_TEMPLATES[CONFIG.ai.promptType] || PROMPT_TEMPLATES.smart_grouper;
-    basePrompt = basePrompt.replace('{tabList}', tabsInfoText)
-                           .replace('{tabCount}', tabs.length.toString())
-                           .replace('{existingGroups}', existingInfoText);
-    
+
     if (CONFIG.ai.customInstructions && CONFIG.ai.customInstructions.trim() !== '') {
-      basePrompt += `\n\n**Custom Instructions:**\n${CONFIG.ai.customInstructions.trim()}\n`;
+      basePrompt = `**USER CUSTOM INSTRUCTIONS (HIGHEST PRIORITY):**\n${CONFIG.ai.customInstructions.trim()}\n\n` + basePrompt;
     }
+
+    basePrompt = basePrompt.replace('{tabList}', tabsInfoText)
+      .replace('{tabCount}', tabs.length.toString())
+      .replace('{existingGroups}', existingInfoText);
 
     basePrompt += getFormatInstructions(languageName, othersName);
     return basePrompt;
@@ -702,8 +704,8 @@ Avoid the following:
         showNotification('AI returned group where tab_ids is not an array');
         return false;
       }
-      // Check for single-tab groups (excluding "Others")
-      if (group.tab_ids.length === 1 && !OTHERS_NAMES.includes(group.name)) {
+      // Check for single-tab groups (excluding "Others" and "_IGNORE_")
+      if (group.tab_ids.length === 1 && !OTHERS_NAMES.includes(group.name) && group.name !== '_IGNORE_') {
         console.warn('Warning: Group has only one tab:', group);
       }
     }
@@ -711,7 +713,7 @@ Avoid the following:
   };
   // Map AI results to internal format
   const mapAIResultsToGroups = (aiResult, tabs, existingStacks) => {
-    const initialGroups = aiResult.groups.map(group => {
+    const initialGroups = aiResult.groups.filter(g => g.name !== '_IGNORE_').map(group => {
       const existingStack = existingStacks.find(s => s.name === group.name);
       return {
         name: group.name,
@@ -731,12 +733,12 @@ Avoid the following:
     return filteredGroups;
   };
   // Handle orphan tabs (tabs not in any group)
-  const handleOrphanTabs = (groupedTabs, tabs, existingStacks, languageName) => {
+  const handleOrphanTabs = (groupedTabs, tabs, existingStacks, languageName, ignoredTabIds = new Set()) => {
     const groupedTabIds = new Set();
     groupedTabs.forEach(group => {
       group.tabs.forEach(tab => groupedTabIds.add(tab.id));
     });
-    const orphanTabs = tabs.filter(tab => !groupedTabIds.has(tab.id));
+    const orphanTabs = tabs.filter(tab => !groupedTabIds.has(tab.id) && !ignoredTabIds.has(tab.id));
     if (orphanTabs.length === 0) {
       console.log('No orphan tabs found, all tabs are grouped');
       return;
@@ -796,7 +798,7 @@ Avoid the following:
     const languageName = getLanguageName(browserLang);
     console.log(`Browser language: ${browserLang} (${languageName})`);
     const prompt = buildAIPrompt(tabs, existingStacks, languageName);
-    
+
     try {
       console.log('Calling AI API for intelligent grouping...');
       let content = '';
@@ -865,8 +867,17 @@ Avoid the following:
       const result = parseAIResponse(content);
       if (!result) return null;
       if (!validateAIGroups(result)) return null;
+
+      const ignoredGroup = result.groups.find(g => g.name === '_IGNORE_');
+      const ignoredTabIds = new Set();
+      if (ignoredGroup && Array.isArray(ignoredGroup.tab_ids)) {
+        ignoredGroup.tab_ids.forEach(idx => {
+          if (tabs[idx]) ignoredTabIds.add(tabs[idx].id);
+        });
+      }
+
       const groupedTabs = mapAIResultsToGroups(result, tabs, existingStacks);
-      handleOrphanTabs(groupedTabs, tabs, existingStacks, languageName);
+      handleOrphanTabs(groupedTabs, tabs, existingStacks, languageName, ignoredTabIds);
       console.log('AI grouping result (final):', groupedTabs);
       if (groupedTabs.length === 0) {
         console.warn('No valid groups created (all groups have less than 2 tabs)');
@@ -1522,6 +1533,7 @@ Avoid the following:
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] header.webpanel-header { display: none !important; }',
     // FIX 3: nuclear override so React can't fight back, and give the panel correct positioning
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] { position:relative !important; display:flex !important; flex-direction:column !important; min-height:0 !important; height:100% !important; }',
+    '#panels-container #panels .webpanel-stack.hidden [data-tidy-tabs] { display:none !important; min-height:0 !important; height:0 !important; max-height:0 !important; overflow:hidden !important; flex:0 0 0 !important; }',
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] .webpanel-content { display:none !important; visibility:hidden !important; opacity:0 !important; pointer-events:none !important; min-height:0 !important; height:0 !important; max-height:0 !important; flex:0 0 0 !important; overflow:hidden !important; }',
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] .tidy-tabs-content { position:absolute; inset:0; z-index:10; overflow:auto; background:var(--colorBg); }',
     '.tidy-tabs-content { display: flex; flex-direction: column; padding: 10px; }',
@@ -1614,8 +1626,8 @@ Avoid the following:
   };
   // Load stored config
   chrome.storage.local.get([
-    'AI_PROVIDER', 'OPENAI_URL', 'OPENAI_KEY', 'OPENAI_MODEL', 
-    'OLLAMA_URL', 'OLLAMA_MODEL', 'PROMPT_TYPE', 'INCLUDE_EXISTING_STACKS', 
+    'AI_PROVIDER', 'OPENAI_URL', 'OPENAI_KEY', 'OPENAI_MODEL',
+    'OLLAMA_URL', 'OLLAMA_MODEL', 'PROMPT_TYPE', 'INCLUDE_EXISTING_STACKS',
     'CUSTOM_INSTRUCTIONS', 'ENABLE_AI_GROUPING', 'AUTO_STACK_WORKSPACES'
   ], (result) => {
     if (result.AI_PROVIDER) CONFIG.ai.provider = result.AI_PROVIDER;
@@ -1627,7 +1639,7 @@ Avoid the following:
     if (result.PROMPT_TYPE) CONFIG.ai.promptType = result.PROMPT_TYPE;
     if (result.INCLUDE_EXISTING_STACKS !== undefined) CONFIG.ai.includeExistingStacks = result.INCLUDE_EXISTING_STACKS;
     if (result.CUSTOM_INSTRUCTIONS !== undefined) CONFIG.ai.customInstructions = result.CUSTOM_INSTRUCTIONS;
-    
+
     CONFIG.enableAIGrouping = result.ENABLE_AI_GROUPING !== undefined ? result.ENABLE_AI_GROUPING : CONFIG.enableAIGrouping;
     CONFIG.autoStackWorkspaces = result.AUTO_STACK_WORKSPACES || CONFIG.autoStackWorkspaces;
   });
