@@ -326,18 +326,25 @@
   // ==================== TidyTabs Code (Modified) ====================
   // ==================== Configuration ====================
   const CONFIG = {
-    // GLM API configuration
-    glm: {
-      url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-      key: '',
-      model: 'glm-4.5-flash',
+    ai: {
+      provider: 'openai', // 'openai', 'ollama'
+      openai: {
+        url: '',
+        key: '',
+        model: ''
+      },
+      ollama: {
+        url: 'http://localhost:11434/api/chat',
+        model: 'llama3'
+      },
+      promptType: 'smart_grouper', 
+      includeExistingStacks: true,
+      customInstructions: '',
       temperature: 0.3,
       maxTokens: 2048
     },
     // Auto-stack enabled workspaces (empty array = disabled for all)
-    autoStackWorkspaces: [
-      // "<default_workspace>",
-    ],
+    autoStackWorkspaces: [],
     // Feature toggles
     enableAIGrouping: true,
     maxTabsForAI: 50,
@@ -352,6 +359,68 @@
       autoStack: 1000
     }
   };
+
+  const PROMPT_TEMPLATES = {
+    simple: `You are an AI assistant helping categorize browser tabs.
+
+Here are the open tabs:
+
+{tabList}
+
+Group these {tabCount} tabs into logical categories.`,
+    
+    smart_grouper: `As an AI assistant, analyze and organize these {tabCount} browser tabs into meaningful groups. Here are open tabs: 
+
+{tabList}
+
+Follow these specific guidelines:
+1. Create intuitive groups that reflect how users naturally organize their work and activities
+2. Use short, clear category names (1-2 words) that instantly convey the purpose
+3. Consider tab relationships based on:
+   - Common domains or platforms
+   - Related topics or projects
+   - Similar purposes (research, shopping, etc.)
+   - Temporal context (current tasks vs reference material)
+4. Rules:
+- Create 3-8 groups based on tab count and content similarity
+- not to make too many groups
+- Use short, clear category names (1-2 words, try just 1 word)
+- Keep groups focused and cohesive
+- Each tab must be assigned to exactly one group
+- Group related items even if from different domains`,
+
+    context_aware: `Analyze the provided list of tab data and assign a concise category (1-2 words, Title Case) for EACH tab.
+
+Existing Categories:
+{existingGroups}
+---
+Instructions for Assignment:
+1.  **Prioritize Existing:** For each tab below, determine if it clearly belongs to one of the 'Existing Categories'. Base this primarily on the URL/Domain, then Title/Description. If it fits, you MUST use the EXACT category name provided in the 'Existing Categories' list. DO NOT create a minor variation (e.g., if 'Project Docs' exists, use that, don't create 'Project Documentation').
+2.  **Assign New Category (If Necessary):** Only if a tab DOES NOT fit an existing category, assign the best NEW concise category (1-2 words, Title Case).
+4.  **Format:** 1-2 words, Title Case.
+---
+Input Tab Data:
+{tabList}`
+  };
+
+  const getFormatInstructions = (languageName, othersName) => `
+
+**CRITICAL REQUIREMENTS:**
+1. **All group names must use ${languageName} language**
+2. Tabs that cannot be grouped with any other tabs should be added to the "Others" stack (${othersName})
+
+**OUTPUT FORMAT:**
+Output **strictly valid JSON format only**, nothing else:
+Avoid the following:
+* Empty elements (e.g. [5, , 7])
+* Missing quotes or commas
+* tab_ids containing only single tab groups (e.g. "tab_ids": [6])
+* ***No additional explanatory text, comments, or extra content in output***
+
+**Output example (must strictly follow):**
+{ "groups": [ { "name": "Group name", "tab_ids": [0, 1, 2] }, { "name": "Group name 2", "tab_ids": [3, 4] }, { "name": "${othersName}", "tab_ids": [5, 6] } ] }
+`;
+
   // Selectors
   const SELECTORS = {
     TAB_STRIP: '.tab-strip',
@@ -572,17 +641,24 @@
   // ==================== AI Grouping ====================
   // Build AI prompt for tab grouping
   const buildAIPrompt = (tabs, existingStacks, languageName) => {
-    const tabsInfo = tabs.map((tab, index) => ({
-      id: index,
-      title: tab.title || 'Untitled',
-      domain: getHostname(tab.url),
-      url: tab.url
-    }));
-    const existingInfo = Array.isArray(existingStacks) && existingStacks.length > 0 ?
-      existingStacks.map((s, i) => `${i}. Stack title: ${s.name || 'Unnamed stack'} (ID: ${s.id})`).join('\n') :
-      'None';
+    const tabsInfoText = tabs.map((tab, index) => `${index}. ${tab.title || 'Untitled'} (${getHostname(tab.url)})`).join('\n');
+    let existingInfoText = "None";
+    if (CONFIG.ai.includeExistingStacks && Array.isArray(existingStacks) && existingStacks.length > 0) {
+      existingInfoText = existingStacks.map(s => s.name || 'Unnamed stack').join('\n');
+    }
     const othersName = getOthersName();
-    return ` **Instructions:** Below are existing tab stack information and tabs to be grouped: Existing tab stacks (title and ID): ${existingInfo} Tabs to be grouped (id, title, domain): ${tabsInfo.map(t => `${t.id}. ${t.title} (${t.domain})`).join('\n')} **Follow these rules to group tabs:** # Priority: Assign tabs to existing stacks 1. If a tab's information is semantically related to an existing stack's title, add it to that stack: In the JSON output, match the tab's (tab_ids) to the existing stack's title (name) [VERY IMPORTANT]; If no semantically related existing stack is found, then consider creating a new stack # Requirements for creating new stacks: 2. **Group by content theme**: When creating new stacks, categorize based on semantic similarity of tab titles. 3. **Group names must be specific**: - Group names should be concise and specific, analyze tab titles and determine if they form a specific topic, group and name accordingly - Examples: "css overflow", "javascript async issues", "xxx API collection" - Avoid generic titles like "xxx tutorials", "xxx resources", "resource search" - Allow more generic grouping only when refined to a single remaining tab - **All group names must use ${languageName} language** 4. **Each group must contain at least 2 tabs**. A single tab cannot form a group. 5. Conditions for creating and adding to "Others" stack: 1. Tabs in stacks with only one tab should be added to the "Others" stack (${othersName}) 2. Tabs that cannot be grouped with any other tabs should be added to "Others" 3. When existing stacks **do not contain** an "Others" stack, create one even if it has no tabs 6. Each tab can only appear in one group. 7. Output **strictly valid JSON format only**, nothing else: Avoid the following: * Empty elements (e.g. [5, , 7]) * Missing quotes or commas * tab_ids containing only single tab groups (e.g. "tab_ids": [6]) [VERY IMPORTANT] * ***No additional explanatory text, comments, or extra content in output*** [VERY IMPORTANT] **Output example (must strictly follow):** { "groups": [ { "name": "Group name", "tab_ids": [0, 1, 2] }, { "name": "Group name 2", "tab_ids": [3, 4] }, { "name": "${othersName}", "tab_ids": [5, 6] } ] } `;
+    
+    let basePrompt = PROMPT_TEMPLATES[CONFIG.ai.promptType] || PROMPT_TEMPLATES.smart_grouper;
+    basePrompt = basePrompt.replace('{tabList}', tabsInfoText)
+                           .replace('{tabCount}', tabs.length.toString())
+                           .replace('{existingGroups}', existingInfoText);
+    
+    if (CONFIG.ai.customInstructions && CONFIG.ai.customInstructions.trim() !== '') {
+      basePrompt += `\n\n**Custom Instructions:**\n${CONFIG.ai.customInstructions.trim()}\n`;
+    }
+
+    basePrompt += getFormatInstructions(languageName, othersName);
+    return basePrompt;
   };
   // Parse and validate AI response
   const parseAIResponse = (content) => {
@@ -699,13 +775,19 @@
       }
     }
   };
-  // Call GLM API for intelligent grouping
+  // Call AI API for intelligent grouping
   const getAIGrouping = async (tabs, existingStacks = []) => {
-    if (!CONFIG.glm.key) {
-      console.error('GLM API key not configured');
-      showNotification('GLM API Key not configured, cannot use AI grouping');
+    if (CONFIG.ai.provider === 'openai' && (!CONFIG.ai.openai.url || !CONFIG.ai.openai.key)) {
+      console.error('OpenAI API URL or Key not configured');
+      showNotification('OpenAI API URL or Key not configured, cannot use AI grouping');
       return null;
     }
+    if (CONFIG.ai.provider === 'ollama' && !CONFIG.ai.ollama.url) {
+      console.error('Ollama API URL not configured');
+      showNotification('Ollama API URL not configured, cannot use AI grouping');
+      return null;
+    }
+
     if (tabs.length > CONFIG.maxTabsForAI) {
       console.warn(`Too many tabs (${tabs.length}), limiting to ${CONFIG.maxTabsForAI}`);
       tabs = tabs.slice(0, CONFIG.maxTabsForAI);
@@ -714,37 +796,72 @@
     const languageName = getLanguageName(browserLang);
     console.log(`Browser language: ${browserLang} (${languageName})`);
     const prompt = buildAIPrompt(tabs, existingStacks, languageName);
+    
     try {
-      console.log('Calling GLM API for intelligent grouping...');
-      const response = await fetch(CONFIG.glm.url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${CONFIG.glm.key}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: CONFIG.glm.model,
-          messages: [{
-            role: 'user',
-            content: prompt
-          }],
-          temperature: CONFIG.glm.temperature,
-          max_tokens: CONFIG.glm.maxTokens,
-          stream: false,
-          thinking: {
-            type: "disabled"
-          }
-        })
-      });
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('GLM API error response:', errorText);
-        throw new Error(`GLM API error: ${response.status} ${response.statusText}`);
+      console.log('Calling AI API for intelligent grouping...');
+      let content = '';
+
+      if (CONFIG.ai.provider === 'openai') {
+        const response = await fetch(CONFIG.ai.openai.url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${CONFIG.ai.openai.key}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: CONFIG.ai.openai.model,
+            messages: [{
+              role: 'user',
+              content: prompt
+            }],
+            temperature: CONFIG.ai.temperature,
+            max_tokens: CONFIG.ai.maxTokens,
+            stream: false
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        content = data.choices[0].message.content;
+      } else if (CONFIG.ai.provider === 'ollama') {
+        const urlToUse = CONFIG.ai.ollama.url.trim();
+        if (urlToUse.includes('/api/generate')) {
+          const response = await fetch(urlToUse, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: CONFIG.ai.ollama.model,
+              prompt: prompt,
+              stream: false,
+              format: 'json'
+            })
+          });
+          if (!response.ok) throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+          const data = await response.json();
+          content = data.response;
+        } else {
+          const chatUrl = urlToUse.endsWith('/api/chat') ? urlToUse : urlToUse.replace(/\/$/, '') + '/api/chat';
+          const response = await fetch(chatUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: CONFIG.ai.ollama.model,
+              messages: [{
+                role: 'user',
+                content: prompt
+              }],
+              stream: false,
+              format: 'json'
+            })
+          });
+          if (!response.ok) throw new Error(`Ollama API error: ${response.status} ${response.statusText}`);
+          const data = await response.json();
+          content = data.message.content;
+        }
       }
-      const data = await response.json();
-      console.log('GLM API full response:', data);
-      const content = data.choices[0].message.content;
-      console.log('GLM API content:', content);
+
+      console.log('AI API content:', content);
       const result = parseAIResponse(content);
       if (!result) return null;
       if (!validateAIGroups(result)) return null;
@@ -758,8 +875,8 @@
       }
       return groupedTabs;
     } catch (error) {
-      console.error('Error calling GLM API:', error);
-      showNotification(`Error calling GLM API: ${error.message}`);
+      console.error('Error calling AI API:', error);
+      showNotification(`Error calling AI API: ${error.message}`);
       return null;
     }
   };
@@ -952,7 +1069,7 @@
       return;
     }
     let groups;
-    if (CONFIG.enableAIGrouping && CONFIG.glm.key) {
+    if (CONFIG.enableAIGrouping) {
       groups = await getAIGrouping(tabs);
       if (!groups) {
         console.log('AI grouping failed, falling back to domain grouping');
@@ -1008,7 +1125,7 @@
       return;
     }
     let groups;
-    if (CONFIG.enableAIGrouping && CONFIG.glm.key) {
+    if (CONFIG.enableAIGrouping) {
       console.log('Using AI grouping for current workspace...');
       groups = await getAIGrouping(ungroupedTabs, existingStacks);
       if (!groups) {
@@ -1047,7 +1164,7 @@
         return;
       }
       let groups;
-      if (CONFIG.enableAIGrouping && CONFIG.glm.key) {
+      if (CONFIG.enableAIGrouping) {
         console.log('Using AI grouping...');
         groups = await getAIGrouping(validTabs, existingStacks);
         if (!groups) {
@@ -1139,8 +1256,16 @@
   };
   const langs = {
     tidyCurrent: 'Tidy Current Workspace',
-    apiKey: 'GLM API Key',
     enableAI: 'Enable AI Grouping',
+    aiProvider: 'AI Provider',
+    openaiUrl: 'OpenAI URL',
+    openaiKey: 'OpenAI Key',
+    openaiModel: 'OpenAI Model',
+    ollamaUrl: 'Ollama URL',
+    ollamaModel: 'Ollama Model',
+    promptType: 'Prompt Template',
+    includeExisting: 'Include Existing Stacks',
+    customInstructions: 'Custom Instructions',
     autoStack: 'Auto Stack Workspaces',
     closePanel: gnoh.i18n.getMessage('Close Panel'),
   };
@@ -1236,20 +1361,6 @@
           click: tidyCurrentWorkspace
         }
       }, panelContent);
-      // API Key input
-      const apiKeyLabel = gnoh.createElement('label', {
-        text: langs.apiKey + ': '
-      }, panelContent);
-      const apiKeyInput = gnoh.createElement('input', {
-        type: 'text',
-        value: CONFIG.glm.key,
-        events: {
-          change: (e) => {
-            CONFIG.glm.key = e.target.value;
-            chrome.storage.local.set({ GLM_KEY: CONFIG.glm.key });
-          }
-        }
-      }, panelContent);
       // Enable AI checkbox
       const enableAILabel = gnoh.createElement('label', {
         text: langs.enableAI + ': '
@@ -1264,6 +1375,104 @@
           }
         }
       }, panelContent);
+
+      // AI Settings Container
+      const aiSettingsContainer = gnoh.createElement('div', {
+        class: 'tidy-tabs-settings-container'
+      }, panelContent);
+
+      // Provider
+      gnoh.createElement('label', { text: langs.aiProvider + ': ' }, aiSettingsContainer);
+      const providerSelect = gnoh.createElement('select', {
+        events: {
+          change: (e) => {
+            CONFIG.ai.provider = e.target.value;
+            chrome.storage.local.set({ AI_PROVIDER: CONFIG.ai.provider });
+            updateProviderFields();
+          }
+        }
+      }, aiSettingsContainer);
+      gnoh.createElement('option', { value: 'openai', text: 'OpenAI Compatible', selected: CONFIG.ai.provider === 'openai' }, providerSelect);
+      gnoh.createElement('option', { value: 'ollama', text: 'Ollama', selected: CONFIG.ai.provider === 'ollama' }, providerSelect);
+
+      const providerFieldsContainer = gnoh.createElement('div', {
+        class: 'tidy-tabs-provider-fields'
+      }, aiSettingsContainer);
+
+      const updateProviderFields = () => {
+        providerFieldsContainer.innerHTML = '';
+        if (CONFIG.ai.provider === 'openai') {
+          gnoh.createElement('label', { text: langs.openaiUrl + ': ' }, providerFieldsContainer);
+          gnoh.createElement('input', {
+            type: 'text', value: CONFIG.ai.openai.url, placeholder: 'e.g., https://api.openai.com/v1/chat/completions',
+            events: { change: (e) => { CONFIG.ai.openai.url = e.target.value; chrome.storage.local.set({ OPENAI_URL: e.target.value }); } }
+          }, providerFieldsContainer);
+
+          gnoh.createElement('label', { text: langs.openaiKey + ': ' }, providerFieldsContainer);
+          gnoh.createElement('input', {
+            type: 'password', value: CONFIG.ai.openai.key,
+            events: { change: (e) => { CONFIG.ai.openai.key = e.target.value; chrome.storage.local.set({ OPENAI_KEY: e.target.value }); } }
+          }, providerFieldsContainer);
+
+          gnoh.createElement('label', { text: langs.openaiModel + ': ' }, providerFieldsContainer);
+          gnoh.createElement('input', {
+            type: 'text', value: CONFIG.ai.openai.model, placeholder: 'gpt-4o-mini',
+            events: { change: (e) => { CONFIG.ai.openai.model = e.target.value; chrome.storage.local.set({ OPENAI_MODEL: e.target.value }); } }
+          }, providerFieldsContainer);
+        } else {
+          gnoh.createElement('label', { text: langs.ollamaUrl + ': ' }, providerFieldsContainer);
+          gnoh.createElement('input', {
+            type: 'text', value: CONFIG.ai.ollama.url, placeholder: 'http://localhost:11434/api/chat',
+            events: { change: (e) => { CONFIG.ai.ollama.url = e.target.value; chrome.storage.local.set({ OLLAMA_URL: e.target.value }); } }
+          }, providerFieldsContainer);
+
+          gnoh.createElement('label', { text: langs.ollamaModel + ': ' }, providerFieldsContainer);
+          gnoh.createElement('input', {
+            type: 'text', value: CONFIG.ai.ollama.model, placeholder: 'llama3',
+            events: { change: (e) => { CONFIG.ai.ollama.model = e.target.value; chrome.storage.local.set({ OLLAMA_MODEL: e.target.value }); } }
+          }, providerFieldsContainer);
+        }
+      };
+      updateProviderFields();
+
+      // Prompt Dropdown
+      gnoh.createElement('label', { text: langs.promptType + ': ' }, aiSettingsContainer);
+      const promptSelect = gnoh.createElement('select', {
+        events: {
+          change: (e) => {
+            CONFIG.ai.promptType = e.target.value;
+            chrome.storage.local.set({ PROMPT_TYPE: CONFIG.ai.promptType });
+          }
+        }
+      }, aiSettingsContainer);
+      gnoh.createElement('option', { value: 'simple', text: 'Simple Prompt', selected: CONFIG.ai.promptType === 'simple' }, promptSelect);
+      gnoh.createElement('option', { value: 'smart_grouper', text: 'Smart Grouper', selected: CONFIG.ai.promptType === 'smart_grouper' }, promptSelect);
+      gnoh.createElement('option', { value: 'context_aware', text: 'Context Aware', selected: CONFIG.ai.promptType === 'context_aware' }, promptSelect);
+
+      // Include Existing
+      const includeLabel = gnoh.createElement('label', { text: langs.includeExisting + ': ' }, aiSettingsContainer);
+      gnoh.createElement('input', {
+        type: 'checkbox', checked: CONFIG.ai.includeExistingStacks,
+        events: {
+          change: (e) => {
+            CONFIG.ai.includeExistingStacks = e.target.checked;
+            chrome.storage.local.set({ INCLUDE_EXISTING_STACKS: CONFIG.ai.includeExistingStacks });
+          }
+        }
+      }, includeLabel);
+
+      // Custom Instructions
+      gnoh.createElement('label', { text: langs.customInstructions + ': ' }, aiSettingsContainer);
+      gnoh.createElement('textarea', {
+        value: CONFIG.ai.customInstructions,
+        events: {
+          change: (e) => {
+            CONFIG.ai.customInstructions = e.target.value;
+            chrome.storage.local.set({ CUSTOM_INSTRUCTIONS: CONFIG.ai.customInstructions });
+          }
+        },
+        style: { width: '100%', minHeight: '60px', resize: 'vertical' }
+      }, aiSettingsContainer);
       // Auto stack workspaces
       const autoStackLabel = gnoh.createElement('h2', {
         text: langs.autoStack
@@ -1316,8 +1525,10 @@
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] .webpanel-content { display:none !important; visibility:hidden !important; opacity:0 !important; pointer-events:none !important; min-height:0 !important; height:0 !important; max-height:0 !important; flex:0 0 0 !important; overflow:hidden !important; }',
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] .tidy-tabs-content { position:absolute; inset:0; z-index:10; overflow:auto; background:var(--colorBg); }',
     '.tidy-tabs-content { display: flex; flex-direction: column; padding: 10px; }',
-    '.tidy-tabs-content button, .tidy-tabs-content input { margin: 5px 0; }',
-    '.tidy-tabs-content label { display: block; }',
+    '.tidy-tabs-settings-container { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }',
+    '.tidy-tabs-provider-fields { display: flex; flex-direction: column; gap: 5px; }',
+    '.tidy-tabs-content button, .tidy-tabs-content input, .tidy-tabs-content select, .tidy-tabs-content textarea { margin: 5px 0; max-width: 100%; box-sizing: border-box; }',
+    '.tidy-tabs-content label { display: block; margin-top: 5px; }',
     // FIX 2: button selector must use data-name, not name
     'button[data-name="' + webPanelId + '"] > img { display:none; }',
     'button[data-name="' + webPanelId + '"]:before { width: 16px; height: 16px; content: ""; background-color: var(--colorFg); -webkit-mask-box-image: url(' + JSON.stringify(icons.dataURLs.tidy) + '); }',
@@ -1402,8 +1613,21 @@
     });
   };
   // Load stored config
-  chrome.storage.local.get(['GLM_KEY', 'ENABLE_AI_GROUPING', 'AUTO_STACK_WORKSPACES'], (result) => {
-    CONFIG.glm.key = result.GLM_KEY || CONFIG.glm.key;
+  chrome.storage.local.get([
+    'AI_PROVIDER', 'OPENAI_URL', 'OPENAI_KEY', 'OPENAI_MODEL', 
+    'OLLAMA_URL', 'OLLAMA_MODEL', 'PROMPT_TYPE', 'INCLUDE_EXISTING_STACKS', 
+    'CUSTOM_INSTRUCTIONS', 'ENABLE_AI_GROUPING', 'AUTO_STACK_WORKSPACES'
+  ], (result) => {
+    if (result.AI_PROVIDER) CONFIG.ai.provider = result.AI_PROVIDER;
+    if (result.OPENAI_URL !== undefined) CONFIG.ai.openai.url = result.OPENAI_URL;
+    if (result.OPENAI_KEY !== undefined) CONFIG.ai.openai.key = result.OPENAI_KEY;
+    if (result.OPENAI_MODEL !== undefined) CONFIG.ai.openai.model = result.OPENAI_MODEL;
+    if (result.OLLAMA_URL !== undefined) CONFIG.ai.ollama.url = result.OLLAMA_URL;
+    if (result.OLLAMA_MODEL !== undefined) CONFIG.ai.ollama.model = result.OLLAMA_MODEL;
+    if (result.PROMPT_TYPE) CONFIG.ai.promptType = result.PROMPT_TYPE;
+    if (result.INCLUDE_EXISTING_STACKS !== undefined) CONFIG.ai.includeExistingStacks = result.INCLUDE_EXISTING_STACKS;
+    if (result.CUSTOM_INSTRUCTIONS !== undefined) CONFIG.ai.customInstructions = result.CUSTOM_INSTRUCTIONS;
+    
     CONFIG.enableAIGrouping = result.ENABLE_AI_GROUPING !== undefined ? result.ENABLE_AI_GROUPING : CONFIG.enableAIGrouping;
     CONFIG.autoStackWorkspaces = result.AUTO_STACK_WORKSPACES || CONFIG.autoStackWorkspaces;
   });

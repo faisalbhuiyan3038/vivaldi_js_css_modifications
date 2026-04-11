@@ -42,7 +42,7 @@ See [Aldaviva/Vivaldi customizations.md](https://gist.github.com/Aldaviva/9fbe32
 - **📸 Element Capture**: Precision screenshot tool that allows you to capture specific UI elements or webpage components easily.
 - **🎨 Colorful Loading Bar**: A sleek, animated progress bar at the top of the window that indicates page loading status with vibrant colors.
 - **🔍 Yandex-Style Address Bar**: Modernizes the address bar to show the domain prominently and the page title in the center, inspired by Yandex Browser.
-- **🤖 AI Tab Stack**: Intelligently groups tabs using AI (GLM API) to keep your workspace tidy.
+- **🤖 AI Tab Stack**: Intelligent tab organization powered by AI. Supports OpenAI-compatible providers and Ollama. Features three specialized grouping prompts (Simple, Smart, and Context-Aware), automatic workspace grouping, and a dedicated configuration panel for custom instructions and existing stack management.
 - **🔒 Browser Lock**: Password-protects your browser session with a secure, full-screen overlay, blocking all interaction until unlocked.
 - **💬 Link Dialog**: Opens links in a convenient popup dialog via middle-click or context menu, saving tab space.
 
