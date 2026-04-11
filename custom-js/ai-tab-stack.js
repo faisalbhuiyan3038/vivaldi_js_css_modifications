@@ -1146,7 +1146,8 @@
   };
   const simulateWebviewButtonClick = ({ webPanelId, webviewButton, openOnly }) => {
     if (webPanelId) {
-      webviewButton = document.querySelector('.toolbar > .button-toolbar > .ToolbarButton-Button[name*="' + webPanelId + '"]');
+      // FIX 1: use data-name attribute, not name
+      webviewButton = document.querySelector('.toolbar > .button-toolbar > .ToolbarButton-Button[data-name*="' + webPanelId + '"]');
     }
     if (openOnly && webviewButton.parentNode?.classList.contains('active')) {
       return;
@@ -1174,6 +1175,14 @@
         return;
       }
       panel.dataset.tidyTabs = true;
+
+      // FIX 4: suppress the webview so it doesn't steal focus or intercept events
+      const webview = panel.querySelector('webview');
+      if (webview) {
+        webview.blur?.();
+        webview.tabIndex = -1;
+      }
+
       let showCloseButton = await vivaldi.prefs.get('vivaldi.panels.show_close_button');
       let autoClose = await vivaldi.prefs.get('vivaldi.panels.as_overlay.auto_close');
       let asOverlayEnabled = await vivaldi.prefs.get('vivaldi.panels.as_overlay.enabled');
@@ -1296,27 +1305,34 @@
       }
     }
   };
+  // FIX 1, 2, 3: use data-name in CSS selectors, nuclear-override webpanel-content, position panel correctly
   const style = !chrome.extension.inIncognitoContext ? [
     '#panels-container.left #panels .webpanel-stack [data-tidy-tabs] header { padding-left: 9px; }',
     '#panels-container.right #panels .webpanel-stack [data-tidy-tabs] header { padding-left: 12px; }',
     '#panels-container #panels .webpanel-stack [data-tidy-tabs] header { padding-right: var(--scrollbarWidth); padding-top: 12px; }',
-    '#panels-container #panels .webpanel-stack [data-tidy-tabs] header.webpanel-header { display: none; }',
-    '#panels-container #panels .webpanel-stack [data-tidy-tabs] .webpanel-content { display: none; }',
+    '#panels-container #panels .webpanel-stack [data-tidy-tabs] header.webpanel-header { display: none !important; }',
+    // FIX 3: nuclear override so React can't fight back, and give the panel correct positioning
+    '#panels-container #panels .webpanel-stack [data-tidy-tabs] { position:relative !important; display:flex !important; flex-direction:column !important; min-height:0 !important; height:100% !important; }',
+    '#panels-container #panels .webpanel-stack [data-tidy-tabs] .webpanel-content { display:none !important; visibility:hidden !important; opacity:0 !important; pointer-events:none !important; min-height:0 !important; height:0 !important; max-height:0 !important; flex:0 0 0 !important; overflow:hidden !important; }',
+    '#panels-container #panels .webpanel-stack [data-tidy-tabs] .tidy-tabs-content { position:absolute; inset:0; z-index:10; overflow:auto; background:var(--colorBg); }',
     '.tidy-tabs-content { display: flex; flex-direction: column; padding: 10px; }',
     '.tidy-tabs-content button, .tidy-tabs-content input { margin: 5px 0; }',
     '.tidy-tabs-content label { display: block; }',
-    'button[name="' + webPanelId + '"] > img { display:none; }',
-    'button[name="' + webPanelId + '"]:before { width: 16px; height: 16px; content: ""; background-color: var(--colorFg); -webkit-mask-box-image: url(' + JSON.stringify(icons.dataURLs.tidy) + '); }',
-    '.color-behind-tabs-off .toolbar-mainbar button[name="' + webPanelId + '"]:before { background-color: var(--colorAccentFg); }',
-    '.button-toolbar:active button[name="' + webPanelId + '"]:before { transform: scale(0.9); }',
+    // FIX 2: button selector must use data-name, not name
+    'button[data-name="' + webPanelId + '"] > img { display:none; }',
+    'button[data-name="' + webPanelId + '"]:before { width: 16px; height: 16px; content: ""; background-color: var(--colorFg); -webkit-mask-box-image: url(' + JSON.stringify(icons.dataURLs.tidy) + '); }',
+    '.color-behind-tabs-off .toolbar-mainbar button[data-name="' + webPanelId + '"]:before { background-color: var(--colorAccentFg); }',
+    '.button-toolbar:active button[data-name="' + webPanelId + '"]:before { transform: scale(0.9); }',
     '.tidy-tabs-content .tidy-button { background-color: var(--colorBgIntense); color: var(--colorFg); padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; }',
   ] : [
-    '.button-toolbar:has(button[name="' + webPanelId + '"]) { display:none !important; }',
-    '.draggable-button:has(button[name="' + webPanelId + '"]) { display:none !important; }',
+    // FIX 2: incognito branch also needs data-name
+    '.button-toolbar:has(button[data-name="' + webPanelId + '"]) { display:none !important; }',
+    '.draggable-button:has(button[data-name="' + webPanelId + '"]) { display:none !important; }',
   ];
   gnoh.addStyle(style, nameAttribute);
   const updateIconAndTitle = () => {
-    const webviewButtons = Array.from(document.querySelectorAll('.toolbar > .button-toolbar > .ToolbarButton-Button[name*="' + webPanelId + '"]'));
+    // FIX 1: use data-name attribute
+    const webviewButtons = Array.from(document.querySelectorAll('.toolbar > .button-toolbar > .ToolbarButton-Button[data-name*="' + webPanelId + '"]'));
     const webPanelStack = gnoh.getReactProps('.panel-group .webpanel-stack')?.children?.filter(webPanel => webPanel) ?? [];
     const webPanelIndex = webPanelStack.findIndex(webPanel => webPanel.key === webPanelId) + 1;
     const panel = document.querySelector('.panel-group .webpanel-stack .panel.webpanel:nth-child(' + webPanelIndex + ')');
@@ -1345,16 +1361,23 @@
           origin: 'user',
           resizable: false,
           title: name,
-          url: 'chrome://' + nameAttribute,
+          url: code,  // FIX: was 'chrome://' + nameAttribute which is an invalid URL
           width: -1,
           zoom: 1,
         };
         elements.unshift(element);
-        vivaldi.prefs.set({
-          path: 'vivaldi.panels.web.elements',
-          value: elements,
-        });
+      } else {
+        // FIX 5: update existing element so stale URLs from old installs get corrected
+        element.activeUrl = code;
+        element.faviconUrl = icons.dataURLs.tidy;
+        element.faviconUrlValid = true;
+        element.url = code;
       }
+      // FIX 5: always save, not just on create
+      vivaldi.prefs.set({
+        path: 'vivaldi.panels.web.elements',
+        value: elements,
+      });
       Promise.all(
         [
           'vivaldi.toolbars.panel',
@@ -1400,7 +1423,8 @@
     init();
   }
   gnoh.timeOut(() => {
-    const webviewButtons = Array.from(document.querySelectorAll('.toolbar > .button-toolbar > .ToolbarButton-Button[name*="' + webPanelId + '"]'));
+    // FIX 1: use data-name attribute
+    const webviewButtons = Array.from(document.querySelectorAll('.toolbar > .button-toolbar > .ToolbarButton-Button[data-name*="' + webPanelId + '"]'));
     if (webviewButtons.length) {
       updateIconAndTitle();
     } else {
