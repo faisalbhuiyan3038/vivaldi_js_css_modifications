@@ -1,0 +1,63 @@
+/* ==========================================================================
+   TAB HOVER EFFECTS - Modular CSS
+   ========================================================================== 
+   
+   DESCRIPTION:
+   Tab icons zoom and a white glow appears around tabs when hovering.
+   Works with tabs in ANY position (top, bottom, left, right).
+   
+   DEPENDENCIES:
+   None - completely standalone.
+   
+   USAGE:
+   Import this file into your custom.css or use it standalone.
+   
+   ========================================================================== */
+
+/* Soft outline border effect (invisible by default) */
+.tab-position::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 10px;
+    pointer-events: none;
+    border: 2px solid transparent;
+    opacity: 0;
+    transition: border-color 0.25s ease, opacity 0.25s ease;
+    z-index: 1;
+}
+
+/* Show white glow border on hover */
+.tab-position:hover::after {
+    opacity: 1;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Favicon zoom transition setup */
+.tab-position .tab .tab-header .favicon {
+    transition: transform 0.13s ease-out !important;
+}
+
+/* Favicon zoom on hover - works for all tabs */
+.tab-position:hover .tab .tab-header .favicon {
+    transform: scale(1.28) !important;
+}
+
+/* Prevent zoom on pinned tabs' favicons when they have audio (audio icon is showing) */
+.tab-position:not(.is-pinned):hover .tab.audio-on .favicon,
+.tab-position:not(.is-pinned):hover .tab.muted .favicon,
+.tab-position:not(.is-pinned):hover .tab.tab-audio .favicon {
+    transform: none !important;
+}
+
+/* Reduce animations when user prefers reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .tab-position .tab .tab-header .favicon {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+
+    .tab-position:hover::after {
+        animation: none !important;
+    }
+}

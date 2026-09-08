@@ -1,0 +1,1 @@
+{"category":"CATEGORY_COMMAND_CHAIN","chain":[{"defaultValue":"https://vivaldi.com","isVisible":true,"key":"0b01337b-4c13-4197-90c8-179c5c91cfff","label":"Open Link in Current Tab","name":"COMMAND_OPEN_LINK_CURRENT","param":"chrome://restart"}],"key":"33791fca-286d-4d8a-9df5-3a627fcffca6","label":"Restart Browser","name":"COMMAND_33791fca-286d-4d8a-9df5-3a627fcffca6"}

@@ -3,7 +3,7 @@ const path = require('path');
 
 // Configuration - paste any Windows path inside the String.raw backticks
 // String.raw prevents JS from interpreting backslashes as escape sequences
-const BUNDLE_FILE_PATH = process.argv[2] || String.raw`C:\Users\islam\AppData\Local\Vivaldi\Application\7.9.3970.60\resources\vivaldi\bundle.js`;
+const BUNDLE_FILE_PATH = process.argv[2] || String.raw`M:\Vivaldi\Application\8.2.4133.47\resources\vivaldi\bundle.js`;
 const SEARCH_PATTERN = /const\s+\w+\s*=\s*180\s*[;,]/;
 const REPLACE_PATTERN = (match) => match.replace('180', '300');
 

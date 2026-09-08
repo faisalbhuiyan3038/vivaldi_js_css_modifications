@@ -1,0 +1,1079 @@
+/* ==UserStyle==
+ * @name         Peek
+ * @description  Preview link content before opening.
+ * @requirement  ArcPeek.js
+ * @version      2026.7.13
+ * @author       biruktes, tam710562, oudstand, PaRr0tBoY
+ * @website      https://forum.vivaldi.net/post/897615
+ * ==/UserStyle==
+ */
+
+/*
+ * peek-pop-in / peek-pop-out CSS keyframe animations are retired in favor of
+ * a JS-driven Web Animation API path (60-step parabolic arc with baked easing).
+ * The JS path avoids double-animation (CSS + WAAPI fighting over transform),
+ * adds contain:layout for compositor isolation, and generates a quartic-arc
+ * trajectory that CSS @keyframes cannot express with a single cubic-bezier.
+ *
+ * Reference (kept for documentation):
+ *
+ * @keyframes peek-pop-in {
+ *   0%   { transform: translate(var(--peek-translate-x), var(--peek-translate-y)) scale(var(--peek-scale-x), var(--peek-scale-y)); border-radius: var(--peek-source-radius); }
+ *   76%  { transform: translate(0, 0) scale(1.014); border-radius: calc(var(--radius) * 1.08); }
+ *   100% { transform: translate(0, 0) scale(1); border-radius: calc(var(--radius) * 1.05); }
+ * }
+ * @keyframes peek-pop-out {
+ *   0%   { transform: translate(0, 0) scale(1); border-radius: calc(var(--radius) * 1.05); }
+ *   20%  { transform: translate(0, 0) scale(1.01); border-radius: calc(var(--radius) * 1.08); }
+ *   100% { transform: translate(var(--peek-translate-x), var(--peek-translate-y)) scale(var(--peek-scale-x), var(--peek-scale-y)); border-radius: var(--peek-source-radius); }
+ * }
+ */
+
+/* Motion is now fully JS-driven — suppress CSS keyframe animation */
+.peek-container.open .peek-panel,
+.peek-container.closing .peek-panel {
+  animation: none;
+  transform-origin: top left;
+}
+
+.peek-container.pre-open .peek-panel {
+  visibility: hidden;
+}
+
+.peek-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  opacity: 0;
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+#browser #webpage-stack {
+  transition:
+    transform 0.35s cubic-bezier(0.16, 0.88, 0.22, 1),
+    border-radius 0.35s cubic-bezier(0.16, 0.88, 0.22, 1),
+    box-shadow 0.35s cubic-bezier(0.16, 0.88, 0.22, 1) !important;
+}
+
+body.peek-open #browser #webpage-stack {
+  transform: scale(0.97) !important;
+  border-radius: var(--radius);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24) !important;
+  overflow: hidden;
+}
+
+#tabs-container .tab-wrapper:has(.arcpeek-tab-button) .tab-header,
+#tabs-subcontainer .tab-wrapper:has(.arcpeek-tab-button) .tab-header {
+  position: relative;
+}
+
+#browser:not(.alt-tabs) #tabs-container .tab-wrapper:has(.arcpeek-tab-button) .tab,
+#browser:not(.alt-tabs) #tabs-subcontainer .tab-wrapper:has(.arcpeek-tab-button) .tab {
+  position: relative;
+}
+
+#tabs-container .tab-wrapper:has(.arcpeek-tab-button) .title,
+#tabs-subcontainer .tab-wrapper:has(.arcpeek-tab-button) .title {
+  padding-right: 54px;
+}
+
+#browser:not(.alt-tabs) #tabs-container .tab-wrapper:has(.arcpeek-tab-button) .close,
+#browser:not(.alt-tabs) #tabs-subcontainer .tab-wrapper:has(.arcpeek-tab-button) .close {
+  position: absolute;
+  top: 50%;
+  right: 32px;
+  z-index: 5;
+  margin: 0 !important;
+  transform: translateY(-50%);
+}
+
+.alt-tabs #tabs-container .tab-wrapper:has(.arcpeek-tab-button) .close,
+.alt-tabs #tabs-subcontainer .tab-wrapper:has(.arcpeek-tab-button) .close {
+  order: -1;
+}
+
+#tabs-container .arcpeek-tab-button,
+#tabs-subcontainer .arcpeek-tab-button {
+  --arcpeek-tab-button-size: 24px;
+  position: absolute;
+  top: 50%;
+  right: calc(4px + (var(--arcpeek-tab-button-index, 0) * 26px));
+  z-index: 4;
+  display: inline-flex;
+  width: var(--arcpeek-tab-button-size);
+  height: var(--arcpeek-tab-button-size);
+  min-width: var(--arcpeek-tab-button-size);
+  min-height: var(--arcpeek-tab-button-size);
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--colorBgLighter, var(--colorBg)) 86%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--colorFg, currentColor) 14%, transparent),
+    0 1px 4px rgba(0, 0, 0, 0.16);
+  color: var(--colorFg);
+  opacity: 0.92;
+  transform: translateY(-50%);
+  transition:
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+#tabs-container .arcpeek-tab-button:hover,
+#tabs-subcontainer .arcpeek-tab-button:hover {
+  background: color-mix(in srgb, var(--colorHighlightBg, var(--colorAccentBg)) 18%, var(--colorBgLighter, var(--colorBg)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--colorHighlightBg, currentColor) 28%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.2);
+  opacity: 1;
+  transform: translateY(-50%) scale(1.04);
+}
+
+#tabs-container .arcpeek-tab-button-favicon,
+#tabs-subcontainer .arcpeek-tab-button-favicon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+#tabs-container .arcpeek-tab-button-fallback .arcpeek-tab-button-favicon,
+#tabs-subcontainer .arcpeek-tab-button-fallback .arcpeek-tab-button-favicon {
+  display: none;
+}
+
+#tabs-container .arcpeek-tab-button-fallback::before,
+#tabs-subcontainer .arcpeek-tab-button-fallback::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background:
+    linear-gradient(135deg, transparent 45%, color-mix(in srgb, var(--colorFg) 38%, transparent) 46% 54%, transparent 55%),
+    radial-gradient(circle at center, color-mix(in srgb, var(--colorHighlightBg, var(--colorAccentBg)) 65%, var(--colorBg)) 0 62%, transparent 63%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--colorFg) 26%, transparent);
+}
+
+.peek-container {
+  z-index: 1;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--radius);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.peek-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(8, 12, 18, 0.44);
+  opacity: 0;
+  pointer-events: none;
+  /*backdrop-filter: blur(3px) saturate(0.92);
+  -webkit-backdrop-filter: blur(3px) saturate(0.92);*/
+  transition: opacity var(--peek-backdrop-duration, 320ms)
+    cubic-bezier(0.16, 0.88, 0.22, 1);
+}
+
+.peek-container.open::before {
+  opacity: 1;
+}
+
+.peek-container.closing::before {
+  opacity: 0;
+}
+
+.peek-container.expanding-to-tab::before {
+  opacity: 0;
+}
+
+.peek-container .peek-panel {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  border-radius: calc(var(--radius) * 1.05);
+  box-shadow:
+    0 16px 44px rgba(0, 0, 0, 0.26),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--colorBg) 92%, black 8%);
+  transition:
+    background 0.18s ease,
+    opacity 0.18s ease;
+  margin: 0;
+  transform-origin: top left;
+
+  /* Compositor hints — only active during animation.
+     Cleared via [data-has-finished-animation] after the JS-driven motion
+     completes, so GPU memory is released promptly. */
+  &:not([data-has-finished-animation="true"]) {
+    will-change: transform, opacity;
+    contain: layout size;
+  }
+
+  &[data-has-finished-animation="true"] {
+    left: 10% !important;
+    right: 10% !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    transform: none !important;
+    box-shadow:
+      0 28px 80px rgba(0, 0, 0, 0.38),
+      0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+
+  &.preview-animating {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  &.preview-closing {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  webview {
+    position: relative;
+    flex: 1;
+    overflow: hidden;
+    border-radius: var(--radius);
+  }
+}
+
+.peek-container .peek-source-preview {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--preview-fg, rgba(18, 18, 18, 0.92));
+  background: var(--preview-bg, rgb(247, 247, 248));
+  border-radius: inherit;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  contain: paint;
+}
+
+.peek-container .peek-source-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--preview-bg, rgb(247, 247, 248));
+  opacity: 1;
+  transition: opacity var(--peek-backdrop-duration, 320ms)
+    cubic-bezier(0.2, 0.82, 0.24, 1);
+  z-index: 0;
+}
+
+.peek-container .peek-panel.preview-closing .peek-source-preview {
+  z-index: 3;
+}
+
+.peek-container .peek-panel.preview-closing-matte .peek-source-preview::before {
+  opacity: 0;
+}
+
+.peek-container .peek-source-preview-image {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  flex: 0 0 auto;
+  opacity: 0;
+  border-radius: inherit;
+  object-fit: contain;
+  object-position: center;
+  position: relative;
+  z-index: 1;
+}
+
+.peek-container .peek-source-preview.has-source-preview .peek-source-preview-image {
+  opacity: 1;
+}
+
+.peek-container .peek-sidebar-button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.92);
+  background: color-mix(in srgb, var(--colorBg) 68%, transparent);
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  transition:
+    transform 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.peek-container .peek-panel:not([data-has-finished-animation="true"])
+  .peek-sidebar-button,
+.peek-container .peek-panel.preview-animating .peek-sidebar-button,
+.peek-container .peek-panel.preview-closing .peek-sidebar-button {
+  box-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.12),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  backdrop-filter: none;
+}
+
+.peek-container .peek-sidebar-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.peek-container .peek-sidebar-button[hidden] {
+  display: none !important;
+}
+
+.peek-container .peek-sidebar-button.open-here-button svg,
+.peek-container .peek-sidebar-button.background-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.peek-container .peek-sidebar-button.copy-link-button svg,
+.peek-container .peek-sidebar-button.copy-link-button svg * {
+  fill: none;
+  stroke: currentColor;
+}
+
+.peek-container .peek-sidebar-button.copy-link-button svg {
+  width: 26px;
+  height: 26px;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.peek-container .peek-sidebar-button.translate-button svg,
+.peek-container .peek-sidebar-button.translate-button svg * {
+  fill: none;
+  stroke: currentColor;
+}
+
+.peek-container .peek-sidebar-button.translate-button svg {
+  width: 26px;
+  height: 26px;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.peek-container .peek-sidebar-button.translate-button.translate-active {
+  background: var(--colorHighlightBg);
+  color: var(--colorHighlightFg, #fff);
+}
+
+/* Reader View & AI Summarize buttons — in translate sub-menu
+   Shared: 26 px stroke-based icon with highlight active state */
+.peek-container .peek-sidebar-button.reader-button svg,
+.peek-container .peek-sidebar-button.summarize-button svg {
+  width: 26px;
+  height: 26px;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.peek-container .peek-sidebar-button.reader-button svg,
+.peek-container .peek-sidebar-button.reader-button svg *,
+.peek-container .peek-sidebar-button.summarize-button svg,
+.peek-container .peek-sidebar-button.summarize-button svg * {
+  fill: none;
+  stroke: currentColor;
+}
+
+.peek-container .peek-sidebar-button.reader-button.reader-active,
+.peek-container .peek-sidebar-button.summarize-button.summarize-active {
+  background: var(--colorHighlightBg);
+  color: var(--colorHighlightFg, #fff);
+}
+
+.peek-container .peek-sidebar-button.arcpeek-feedback-reload svg {
+  animation: arcpeek-reload-spin 0.72s cubic-bezier(0.33, 0.02, 0.24, 1) both;
+  transform-origin: center;
+}
+
+.peek-container .peek-sidebar-button.arcpeek-feedback-back,
+.peek-container .peek-sidebar-button.arcpeek-feedback-back svg {
+  animation: arcpeek-nav-bump-left 0.42s cubic-bezier(0.25, 0.86, 0.28, 1) both;
+}
+
+.peek-container .peek-sidebar-button.arcpeek-feedback-forward,
+.peek-container .peek-sidebar-button.arcpeek-feedback-forward svg {
+  animation: arcpeek-nav-bump-right 0.42s cubic-bezier(0.25, 0.86, 0.28, 1) both;
+}
+
+.peek-container .peek-sidebar-button.arcpeek-feedback-copy {
+  color: color-mix(in srgb, var(--colorHighlightBg, #5fd38d) 72%, white 18%);
+}
+
+.peek-container .peek-sidebar-button.arcpeek-feedback-copy svg {
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+  box-sizing: border-box;
+  animation: arcpeek-copy-morph 0.38s cubic-bezier(0.16, 0.88, 0.22, 1) both;
+}
+
+@keyframes arcpeek-reload-spin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  48% {
+    transform: rotate(-186deg) scale(0.98);
+  }
+  100% {
+    transform: rotate(-360deg) scale(1);
+  }
+}
+
+@keyframes arcpeek-copy-morph {
+  0% {
+    opacity: 0;
+    transform: scale(0.42) rotate(-18deg);
+    filter: blur(2px);
+  }
+  62% {
+    opacity: 1;
+    transform: scale(1.16) rotate(3deg);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+    filter: blur(0);
+  }
+}
+
+@keyframes arcpeek-nav-bump-right {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  52% {
+    transform: translateX(3px) scaleX(1.025);
+  }
+  78% {
+    transform: translateX(-1px) scaleX(0.992);
+  }
+  100% {
+    transform: translateX(0) scaleX(1);
+  }
+}
+
+@keyframes arcpeek-nav-bump-left {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  52% {
+    transform: translateX(-3px) scaleX(1.025);
+  }
+  78% {
+    transform: translateX(1px) scaleX(0.992);
+  }
+  100% {
+    transform: translateX(0) scaleX(1);
+  }
+}
+
+.peek-container .peek-sidebar-button:disabled {
+  cursor: default;
+  opacity: 0.34;
+  filter: saturate(0.45);
+}
+
+.peek-container .peek-sidebar-button:disabled:hover {
+  transform: none;
+  background: color-mix(in srgb, var(--colorBg) 68%, transparent);
+}
+
+.peek-container .peek-sidebar-button:hover {
+  transform: scale(1.08);
+  background: color-mix(in srgb, var(--colorBgIntense) 82%, white 18%);
+}
+
+.peek-container .peek-sidebar-button.close-button:hover {
+  background: rgb(220, 53, 69);
+  color: white;
+}
+
+.peek-container .peek-open-actions {
+  position: relative;
+  width: 38px;
+  height: 38px;
+}
+
+.peek-container .peek-open-actions::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 8px;
+  height: 38px;
+}
+
+.peek-container .peek-open-actions-menu {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-12px) scale(0.92);
+  transform-origin: left center;
+  transition:
+    opacity 0.16s ease,
+    transform 0.18s cubic-bezier(0.16, 0.88, 0.22, 1);
+}
+
+.peek-container .peek-open-actions:hover .peek-open-actions-menu,
+.peek-container .peek-open-actions:focus-within .peek-open-actions-menu,
+.peek-container .peek-sidebar-controls.peek-initial-expand .peek-open-actions-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+}
+
+.peek-container .peek-panel .peek-sidebar-controls {
+  position: absolute;
+  top: 10px;
+  left: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+  width: 38px;
+  z-index: 4;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.peek-container .peek-panel .peek-sidebar-controls,
+.peek-container .peek-panel .peek-sidebar-controls .peek-sidebar-button {
+  pointer-events: auto;
+}
+
+/* ===== Dynamic Island ===== */
+
+.peek-dynamic-island {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  min-width: 180px;
+  max-width: 340px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--colorBg) 86%, black 14%);
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.38),
+    inset 0 0 0 1px color-mix(in srgb, var(--colorFg) 10%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  color: var(--colorFg);
+  font-family: var(--sansSerifFont, system-ui, sans-serif);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transform: translate(-50%, -60px) scale(0.82);
+  transform-origin: center top;
+  transition:
+    opacity 0.28s cubic-bezier(0.16, 0.88, 0.22, 1),
+    transform 0.28s cubic-bezier(0.16, 0.88, 0.22, 1),
+    max-width 0.32s cubic-bezier(0.16, 0.88, 0.22, 1),
+    box-shadow 0.24s ease,
+    background 0.24s ease;
+  will-change: transform, opacity, max-width;
+}
+
+.peek-dynamic-island.visible {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.peek-dynamic-island:hover {
+  max-width: 520px;
+  background: color-mix(in srgb, var(--colorBg) 78%, black 22%);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.48),
+    inset 0 0 0 1px color-mix(in srgb, var(--colorFg) 16%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--colorHighlightBg) 28%, transparent);
+}
+
+.peek-dynamic-island:active {
+  transform: translate(-50%, 0) scale(0.97);
+  transition: transform 0.12s ease;
+}
+
+/* Island favicon */
+.island-favicon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+  opacity: 0.88;
+}
+
+/* Island title */
+.island-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--colorFg);
+  opacity: 0.82;
+  transition:
+    opacity 0.18s ease,
+    color 0.18s ease;
+}
+
+.peek-dynamic-island:hover .island-title {
+  opacity: 1;
+  /*
+   * Defer text expansion until the max-width transition (0.32s) finishes.
+   * Without this delay, white-space flips to "normal" immediately while the
+   * island is still narrow → title wraps → then snaps back to one line
+   * when max-width finishes → jarring layout jump.  The 0.35s delay gives
+   * the island time to fully expand before revealing the full title.
+   */
+  animation: island-title-reveal 0.01s 0.35s forwards;
+}
+
+@keyframes island-title-reveal {
+  to {
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+}
+
+/* Island loading spinner */
+@keyframes island-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Spinner + close button shared container — collapses when not needed */
+.island-spinner-wrap {
+  flex-shrink: 0;
+  position: relative;
+  width: 0;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    width 0.24s cubic-bezier(0.16, 0.88, 0.22, 1),
+    opacity 0.18s ease,
+    margin-right 0.24s cubic-bezier(0.16, 0.88, 0.22, 1);
+}
+
+/* Expand on hover or while loading */
+.peek-dynamic-island:hover .island-spinner-wrap,
+.island-spinner-wrap.has-spinner {
+  width: 20px;
+  opacity: 1;
+  margin-right: -4px;
+}
+
+.island-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--colorFg) 18%, transparent);
+  border-top-color: var(--colorHighlightBg);
+  border-radius: 50%;
+  animation: island-spin 0.8s linear infinite;
+  opacity: 0.72;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.island-spinner.hidden {
+  opacity: 0;
+  animation: none;
+}
+
+/* Close button — hidden by default, shown on hover */
+.island-close {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--colorFg);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    background 0.14s ease;
+  cursor: pointer;
+  padding: 0;
+  line-height: 0;
+}
+
+.island-close::before,
+.island-close::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 1.5px;
+  background: currentColor;
+  border-radius: 1px;
+}
+
+.island-close::before { transform: rotate(45deg); }
+.island-close::after  { transform: rotate(-45deg); }
+
+/* On island hover: hide spinner, show close button */
+.peek-dynamic-island:hover .island-spinner {
+  opacity: 0;
+  transform: scale(0.6);
+}
+
+.peek-dynamic-island:hover .island-close {
+  opacity: 0.72;
+  transform: scale(1);
+}
+
+.peek-dynamic-island .island-close:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--colorFg) 14%, transparent);
+}
+
+/* Peek panel → Island morphing (JS-driven via Web Animation API, CSS here as fallback) */
+.peek-container.island-minimized .peek-panel {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.peek-container.island-minimized::before {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+.peek-container.island-minimized {
+  pointer-events: none;
+}
+
+/* ===== AI Summarize Panel ===== */
+
+/* When summarize is active: webview shrinks, panel fills right 35%.
+   A true blend is impossible in the push layout (no overlapping content
+   to blur), so the panel uses a crisp edge with subtle shadow. */
+.peek-container .peek-panel[data-summarize="true"] .peek-content {
+  margin-right: 35%;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.peek-container .peek-panel[data-summarize="true"] .peek-content webview {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Summarize panel — solid dark surface with soft left-edge shadow */
+.peek-container .peek-summarize-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 35%;
+  height: 100%;
+  display: none;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--colorBg) 93%, black 7%);
+  border-left: 1px solid color-mix(in srgb, var(--colorFg) 7%, transparent);
+  box-shadow: -4px 0 18px rgba(0, 0, 0, 0.25), -1px 0 0 rgba(0, 0, 0, 0.12);
+  border-radius: 0 calc(var(--radius) * 1.05) calc(var(--radius) * 1.05) 0;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.peek-container .peek-panel[data-summarize="true"] .peek-summarize-panel {
+  display: flex;
+}
+
+.peek-container .peek-summarize-panel[hidden] {
+  display: none !important;
+}
+
+/* Summarize content area */
+.summarize-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 18px 24px;
+  font-size: 0.8rem;
+  line-height: 1.72;
+  color: var(--colorFg);
+  user-select: text;
+  -webkit-user-select: text;
+  /* Hide scrollbar */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.summarize-content::-webkit-scrollbar {
+  display: none;
+}
+
+/* Placeholder text before summarization starts */
+.summarize-placeholder {
+  color: var(--colorFgFaded);
+  font-style: italic;
+  text-align: center;
+  padding-top: 40px;
+}
+
+/* Loading state */
+.summarize-loading {
+  color: var(--colorFgFaded);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 16px;
+}
+
+/* Spinner */
+@keyframes summarize-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.summarize-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border: 2px solid color-mix(in srgb, var(--colorFg) 14%, transparent);
+  border-top-color: var(--colorHighlightBg);
+  border-radius: 50%;
+  animation: summarize-spin 0.7s linear infinite;
+}
+
+/* Streaming text output (raw, pre-markdown) */
+.summarize-stream {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.summarize-stream::after {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 1px;
+  background: var(--colorHighlightBg);
+  vertical-align: text-bottom;
+  animation: summarize-cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes summarize-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+/* Rendered markdown content */
+.summarize-rendered {
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.summarize-rendered h1,
+.summarize-rendered h2,
+.summarize-rendered h3 {
+  margin: 0 0 8px;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--colorFg);
+}
+
+.summarize-rendered h1 { font-size: 1.15rem; }
+.summarize-rendered h2 { font-size: 1.05rem; }
+.summarize-rendered h3 { font-size: 0.92rem; }
+.summarize-rendered h4 { font-size: 0.84rem; }
+
+.summarize-rendered p {
+  margin: 0 0 10px;
+}
+
+.summarize-rendered ul,
+.summarize-rendered ol {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+
+.summarize-rendered ul {
+  list-style-type: disc;
+}
+
+.summarize-rendered ul ul {
+  list-style-type: circle;
+}
+
+.summarize-rendered ol {
+  list-style-type: decimal;
+}
+
+.summarize-rendered li {
+  margin-bottom: 4px;
+}
+
+.summarize-rendered strong {
+  font-weight: 650;
+  color: var(--colorFg);
+}
+
+.summarize-rendered em {
+  font-style: italic;
+  opacity: 0.88;
+}
+
+.summarize-rendered code {
+  font-family: var(--monospaceFont, 'Cascadia Code', 'JetBrains Mono', monospace);
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--colorFg) 8%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.summarize-rendered pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--colorBg) 70%, black 30%);
+  border-radius: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.summarize-rendered pre::-webkit-scrollbar {
+  display: none;
+}
+
+.summarize-rendered pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.summarize-rendered a {
+  color: var(--colorHighlightBg);
+  text-decoration: none;
+}
+
+.summarize-rendered a:hover {
+  text-decoration: underline;
+}
+
+.summarize-rendered blockquote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--colorHighlightBg) 40%, transparent);
+  opacity: 0.82;
+  font-style: italic;
+}
+
+.summarize-rendered hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--colorFg) 8%, transparent);
+  margin: 12px 0;
+}
+
+.summarize-rendered table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+
+.summarize-rendered thead {
+  border-bottom: 2px solid color-mix(in srgb, var(--colorFg) 18%, transparent);
+}
+
+.summarize-rendered th {
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 650;
+  color: var(--colorFg);
+  white-space: nowrap;
+}
+
+.summarize-rendered td {
+  padding: 5px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--colorFg) 6%, transparent);
+  vertical-align: top;
+}
+
+.summarize-rendered tr:last-child td {
+  border-bottom: none;
+}
+
+/* Error display */
+.summarize-error {
+  color: var(--colorErrorBg, #b56357);
+  padding-top: 12px;
+  line-height: 1.6;
+}
+
+.summarize-error-title {
+  font-weight: 650;
+  margin-bottom: 6px;
+  color: var(--colorFg);
+}
+
+.summarize-error p {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  opacity: 0.82;
+}

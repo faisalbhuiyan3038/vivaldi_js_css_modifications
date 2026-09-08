@@ -1,0 +1,78 @@
+/* ==========================================================================
+   TAB SWITCH TRANSITION - Modular CSS
+   ========================================================================== 
+   
+   DESCRIPTION:
+   Smooth transition animation when switching between tabs.
+   Creates a fade-in and scale effect for better visual feedback.
+   Works with tabs in ANY position (top, bottom, left, right).
+   
+   DEPENDENCIES:
+   None - completely standalone.
+   
+   USAGE:
+   Import this file into your custom.css or use it standalone.
+   
+   NOTE:
+   The animation applies to the webpage content when a tab becomes visible.
+   
+   ========================================================================== */
+
+/* Zen transition animation for when webpages become visible */
+.webpageview.visible {
+    animation: zenTransition 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: center center;
+}
+
+/* Keyframe animation: fade in with slight zoom and blur removal */
+@keyframes zenTransition {
+    0% {
+        opacity: 0.8;
+        transform: scale(0.97);
+        filter: blur(8px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0);
+    }
+}
+
+/* Optional: Loading overlay effect on tab switch (subtle blur effect) */
+.webpageview.visible::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transform: scale(1.05);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.6s ease, transform 0.6s ease, backdrop-filter 0.6s ease;
+    z-index: 999;
+}
+
+/* Show overlay on active interaction (optional, can be removed if not desired) */
+.webpageview.visible:active::before {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* Reduce animations when user prefers reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .webpageview.visible {
+        animation-duration: 0.01ms !important;
+    }
+
+    @keyframes zenTransition {
+
+        0%,
+        100% {
+            opacity: 1;
+            transform: scale(1);
+            filter: blur(0);
+        }
+    }
+}
