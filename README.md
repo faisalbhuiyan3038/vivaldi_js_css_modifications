@@ -38,6 +38,7 @@ See [Aldaviva/Vivaldi customizations.md](https://gist.github.com/Aldaviva/9fbe32
 ### Functional Enhancements (JavaScript)
 - **🚀 Easy Files**: Supercharge your file uploads! Quickly pick files from your recent downloads or clipboard directly from the file upload dialog.
 - **🎬 Advanced Picture-in-Picture**: Powerful PiP mode with auto-activation when switching tabs, customizable shortcuts (Boss Key), and seek controls.
+- **📺 Firefox-style Picture-in-Picture**: Keeps videos playing in PiP when you switch tabs, with a captions toggle, a fullscreen/maximize toggle and no stuck title overlay. It replaces Vivaldi's internal PiP component; see [custom-js/pip-firefox-style](custom-js/pip-firefox-style/README.md).
 - **🎵 Global Media Controls**: A dedicated panel to manage all your media playback across all tabs in one place.
 - **📸 Element Capture**: Precision screenshot tool that allows you to capture specific UI elements or webpage components easily.
 - **🎨 Colorful Loading Bar**: A sleek, animated progress bar at the top of the window that indicates page loading status with vibrant colors.
