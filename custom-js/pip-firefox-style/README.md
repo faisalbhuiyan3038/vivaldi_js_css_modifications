@@ -41,6 +41,14 @@ If a site asks about "Automatic picture-in-picture", allow it. You can also set 
 
 Without the flag, the mod falls back to trying PiP on `visibilitychange`. That only works if you interacted with the page within the last few seconds, which is a browser restriction.
 
+Chromium only offers auto-PiP when a tab **stops being the active tab**. If the video's tab gets hidden some other way, Chromium stays silent. One example is the tab coming back from the fullscreen window as a background tab. The UI helper covers this:
+- It makes the video tab active for a split second, then hands the active spot back to the tab you're on.
+- Chromium sees a normal tab switch and offers PiP. You may notice a brief flash of the video tab.
+- It happens at most once every 10 seconds.
+- If it doesn't help on a page, for example because auto-PiP is blocked for that site, the mod stops trying there.
+
+The page's DevTools console, with Verbose shown, logs which route was used: `browser asked`, `visibilitychange fallback` or `tab flip`.
+
 ## Keys inside the PiP window
 
 | Key | Action |

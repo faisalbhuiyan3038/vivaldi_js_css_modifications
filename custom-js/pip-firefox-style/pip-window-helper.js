@@ -173,6 +173,22 @@
         return { ok: true, saved: true };
       }
 
+      // The video's tab got hidden without Chromium offering auto-PiP (e.g. it came back from the fullscreen window
+      // as a background tab, or something other than a tab switch hid it) and the page has no user gesture to open
+      // PiP itself. Chromium only offers auto-PiP when a tab stops being the active one, so flip: activate the video
+      // tab for a moment, then give the active spot back to the tab the user is on.
+      case 'nudgeAutoPip': {
+        const t = await chrome.tabs.get(tab.id);
+        if (t.active) return { ok: false, error: 'tab is active (window hidden or minimized?)' };
+        const [current] = await chrome.tabs.query({ windowId: t.windowId, active: true });
+        if (!current) return { ok: false, error: 'no active tab' };
+        await chrome.tabs.update(t.id, { active: true });
+        await new Promise((r) => setTimeout(r, 60));
+        await chrome.tabs.update(current.id, { active: true });
+        LOG('nudged auto-PiP for tab', t.id);
+        return { ok: true };
+      }
+
       // Sent after exitFullscreen for "back to tab"; answered by the helper of the window the tab is now in.
       case 'activateTab':
         await chrome.tabs.update(tab.id, { active: true });

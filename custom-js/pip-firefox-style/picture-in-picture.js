@@ -1172,9 +1172,32 @@
     },
 
     onEnter() {
+      LOG('Auto-PiP: browser asked (enterpictureinpicture)');
       if (!S.autoPip || this.suppressed() || isBlacklisted() || session || document.pictureInPictureElement) return;
       const v = findAutoVideo();
       if (v) openPip(v, { auto: true });
+    },
+
+    // Chromium only offers auto-PiP when the tab stops being the active tab. If the tab got hidden some other way
+    // (e.g. it came back from the fullscreen window as a background tab) and there's no user gesture for the
+    // fallback, the UI helper flips the tabs once so Chromium sees a real tab switch. At most once per 10 s.
+    lastNudge: 0,
+    nudgeUseless: false,
+    async nudge() {
+      if (!this.registered || this.nudgeUseless || Date.now() - this.lastNudge < 10000) return;
+      if (!(await Helper.available())) return;
+      this.lastNudge = Date.now();
+      const r = await Helper.ask({ fpip: 'nudgeAutoPip' });
+      LOG('Auto-PiP: asked the UI helper for a tab flip:', r && r.ok ? 'done' : (r && r.error) || 'no answer');
+      if (!r || !r.ok) return;
+      // If even a real tab switch doesn't get Chromium to offer PiP (e.g. auto-PiP blocked for this site), stop
+      // flipping on this page; otherwise every switch away would flash the tab for nothing.
+      setTimeout(() => {
+        if (!session && !document.pictureInPictureElement) {
+          this.nudgeUseless = true;
+          LOG('Auto-PiP: tab flip did not help on this page; not flipping again');
+        }
+      }, 2000);
     },
 
     onVisibility() {
@@ -1184,9 +1207,11 @@
         if (!v) return;
         // Fallback for when the mediaSession route is not available. Usually needs a recent user gesture.
         const delay = Math.max(S.autoDelay, this.registered ? 400 : 0);
-        setTimeout(() => {
+        setTimeout(async () => {
           if (document.hidden && !session && !opening && !this.suppressed() && !document.pictureInPictureElement && !v.paused) {
-            openPip(v, { auto: true });
+            LOG('Auto-PiP: browser did not ask; trying visibilitychange fallback');
+            const ok = await openPip(v, { auto: true });
+            if (!ok) this.nudge();
           }
         }, delay);
       } else if (S.exitOnReturn) {
