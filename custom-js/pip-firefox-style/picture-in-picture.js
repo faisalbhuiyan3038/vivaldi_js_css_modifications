@@ -48,6 +48,7 @@
     requireAudio:        { type: 'bool', def: true },
     autoDelay:           { type: 'num', min: 0, max: 10000, step: 100, def: 300 },
     preferDocumentPip:   { type: 'bool', def: true },
+    rememberPlacement:   { type: 'bool', def: true },
     pauseOnClose:        { type: 'bool', def: true },
     captionsOnByDefault: { type: 'bool', def: false },
     captionScale:        { type: 'num', min: 0.5, max: 3, step: 0.1, def: 1, range: true },
@@ -254,22 +255,6 @@
   }
 
   const largest = (list) => list.sort((a, b) => area(b) - area(a))[0] || null;
-
-  // Outermost ancestor that is still about the size of the video: the site's player box, so that fullscreen
-  // keeps the site's own controls and subtitle overlay.
-  function playerContainer(v) {
-    const vr = v.getBoundingClientRect();
-    if (!vr.width || !vr.height) return v;
-    let best = v;
-    let el = v.parentElement;
-    while (el && el !== document.body && el !== document.documentElement) {
-      const r = el.getBoundingClientRect();
-      if (r.width > vr.width * 1.1 + 4 || r.height > vr.height * 1.25 + 4) break;
-      best = el;
-      el = el.parentElement;
-    }
-    return best;
-  }
 
   function findVideoAt(x, y) {
     return largest(getVideos().filter((v) => {
@@ -496,12 +481,13 @@
     }
   }
 
-  // —— PiP window stylesheet ——
+  // —— Player stylesheet (PiP window document, or the fullscreen-window overlay's shadow root) ——
+  // Everything hangs off .fp-root: the PiP window's <body>, or a <div> inside the overlay.
   const PIP_CSS = `
     *{box-sizing:border-box}
-    html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden;color:#fff;
-      font:13px/1.2 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none}
-    body:not(.show-ui){cursor:none}
+    html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
+    .fp-root{color:#fff;font:13px/1.2 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none}
+    .fp-root:not(.show-ui){cursor:none}
     .stage{position:fixed;inset:0;background:#000}
     .stage video{position:absolute!important;inset:0!important;left:0!important;top:0!important;
       width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;
@@ -509,10 +495,10 @@
       display:block!important;visibility:visible!important;opacity:1!important;background:#000}
     video::cue{font-size:calc(var(--cap-scale,1) * clamp(12px,5.2vh,64px));background:rgba(8,8,8,.78)}
     video::-webkit-media-text-track-container{transition:transform .2s ease}
-    body.show-ui video::-webkit-media-text-track-container{transform:translateY(-74px)}
+    .fp-root.show-ui video::-webkit-media-text-track-container{transform:translateY(-74px)}
     .ui{position:fixed;inset:0;opacity:0;transition:opacity .2s ease;pointer-events:none}
-    body.show-ui .ui{opacity:1}
-    body.show-ui .ui button, body.show-ui .ui input{pointer-events:auto}
+    .fp-root.show-ui .ui{opacity:1}
+    .fp-root.show-ui .ui button, .fp-root.show-ui .ui input{pointer-events:auto}
     .shade-top{position:absolute;top:0;left:0;right:0;height:60px;background:linear-gradient(rgba(0,0,0,.55),transparent)}
     .shade-bottom{position:absolute;bottom:0;left:0;right:0;height:96px;background:linear-gradient(transparent,rgba(0,0,0,.7))}
     .top{position:absolute;top:6px;right:6px;display:flex;gap:4px}
@@ -537,12 +523,12 @@
     .vol{width:72px}
     .time{font-variant-numeric:tabular-nums;font-size:12px;opacity:.92;padding:0 6px;white-space:nowrap;
       text-shadow:0 1px 2px rgba(0,0,0,.8)}
-    body.compact .vol, body.compact .center .med{display:none}
-    body.tiny .time{display:none}
+    .fp-root.compact .vol, .fp-root.compact .center .med{display:none}
+    .fp-root.tiny .time{display:none}
     .captions{position:fixed;left:4%;right:4%;bottom:5%;display:flex;flex-direction:column;align-items:center;gap:.12em;
       pointer-events:none;text-align:center;line-height:1.25;transition:bottom .2s ease;
       font-size:calc(var(--cap-scale,1) * clamp(12px,5.2vh,64px))}
-    body.show-ui .captions{bottom:78px}
+    .fp-root.show-ui .captions{bottom:78px}
     .captions span{background:rgba(8,8,8,.78);padding:.05em .35em;border-radius:3px;white-space:pre-wrap;
       -webkit-box-decoration-break:clone;box-decoration-break:clone}
     .toast{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(20,20,20,.9);padding:6px 12px;
@@ -550,17 +536,74 @@
     .toast.show{opacity:1}
   `;
 
-  // —— Document PiP session ——
+  // Extra rules for the fullscreen-window overlay (shadow root inside the page).
+  const WINDOW_CSS = `
+    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:${Z_MAX}!important;display:block!important}
+    .fp-root{position:fixed;inset:0;background:#000}
+    .fp-root .stage{z-index:0}
+    .fp-root .top, .fp-root .center, .fp-root .bottom, .fp-root .toast{zoom:1.4}
+    .fp-root .shade-bottom{height:140px}
+    .fp-root.show-ui .captions{bottom:120px}
+    .fp-root.show-ui video::-webkit-media-text-track-container{transform:translateY(-110px)}
+  `;
+
+  // —— Bridge to the Vivaldi UI helper (pip-window-helper.js in window.html) ——
+  // The PiP component is its own internal extension; Vivaldi's UI is another one. Cross-extension messaging
+  // (sendMessage(UI id) → onMessageExternal) reaches the helper, which can move tabs/windows between monitors.
+  const UI_EXT_ID = 'mpognobbkildjkofajifpdfhcoklimli';
+  const Helper = {
+    present: null,
+    ask(msg, timeout = 4000) {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+        const t = setTimeout(() => finish(null), timeout);
+        try {
+          chrome.runtime.sendMessage(UI_EXT_ID, msg, (reply) => {
+            void (chrome.runtime && chrome.runtime.lastError);
+            finish(reply || null);
+          });
+        } catch (_) { finish(null); }
+      });
+    },
+    async available() {
+      if (this.present === true) return true;
+      const r = await this.ask({ fpip: 'ping' }, 800);
+      this.present = !!(r && r.ok);
+      if (!this.present) LOG('UI helper not found (install pip-window-helper.js for fullscreen on any monitor)');
+      return this.present;
+    }
+  };
+
+  // —— Player session: the PiP window ('pip') or the fullscreen browser window ('window') ——
   let session = null;
   let opening = false;
 
-  class DocPipSession {
+  class PlayerSession {
     static async open(video, auto) {
-      const size = sizeCache || DocPipSession.defaultSize(video);
+      const size = sizeCache || PlayerSession.defaultSize(video);
       const win = await window.documentPictureInPicture.requestWindow({ width: size.w, height: size.h });
-      const s = new DocPipSession(win, video, auto);
+      const s = new PlayerSession('pip', win, video, auto);
       session = s;
       s.mount();
+      return s;
+    }
+
+    // Move the tab into its own fullscreen window on the given screen (via the UI helper) and show the video
+    // there with the same controls as the PiP window.
+    static async openFullWindow(video, screenRect) {
+      const s = new PlayerSession('window', window, video, false);
+      session = s;
+      s.mount();
+      const r = await Helper.ask({ fpip: 'enterFullscreen', screen: screenRect });
+      if (!r || !r.ok) {
+        LOG('UI helper could not open the fullscreen window:', r && r.error);
+        s.close('error');
+        Hover.toast('Could not open a fullscreen window');
+        return null;
+      }
+      s.uiState = { origWindowId: r.origWindowId, origIndex: r.origIndex };
+      LOG('Fullscreen window opened on screen', JSON.stringify(screenRect));
       return s;
     }
 
@@ -571,10 +614,12 @@
       return { w, h: clamp(Math.round((w * vh) / vw), 150, 900) };
     }
 
-    constructor(win, video, auto) {
+    constructor(mode, win, video, auto) {
+      this.mode = mode;
       this.win = win;
       this.doc = win.document;
       this.video = video;
+      this.uiState = null;
       this.auto = auto;
       this.closeReason = null;
       this.restored = false;
@@ -604,18 +649,37 @@
         `position:${cs.position === 'absolute' ? 'absolute' : 'relative'};top:${cs.top};left:${cs.left};` +
         'background:#000;display:flex;align-items:center;justify-content:center;' +
         'color:#bbb;font:14px system-ui,sans-serif;';
-      ph.textContent = 'This video is playing in picture-in-picture';
+      ph.textContent = this.mode === 'pip' ? 'This video is playing in picture-in-picture' : '';
       ph.addEventListener('click', () => this.close('back'));
       this.parent = video.parentNode;
       this.next = video.nextSibling;
       if (this.parent) this.parent.insertBefore(ph, video);
 
-      // Build the PiP document.
-      doc.title = document.title || location.hostname;
+      // Build the player UI: in the PiP document, or in a full-viewport overlay (shadow DOM) in the page.
       const style = doc.createElement('style');
-      style.textContent = PIP_CSS;
-      doc.head.appendChild(style);
-      doc.body.style.setProperty('--cap-scale', String(S.captionScale));
+      if (this.mode === 'pip') {
+        doc.title = document.title || location.hostname;
+        style.textContent = PIP_CSS;
+        doc.head.appendChild(style);
+        this.root = doc.body;
+        this.scope = doc;
+      } else {
+        this.host = doc.createElement('div');
+        this.host.id = 'vivaldi-fpip-fullwindow';
+        const shadow = this.host.attachShadow({ mode: 'closed' });
+        style.textContent = PIP_CSS + WINDOW_CSS;
+        shadow.appendChild(style);
+        this.root = doc.createElement('div');
+        shadow.appendChild(this.root);
+        this.scope = shadow;
+        doc.documentElement.appendChild(this.host);
+        // A fixed overlay can't cover the page's scrollbar: hide page scrolling while fullscreen.
+        this.prevOverflow = doc.documentElement.style.getPropertyValue('overflow');
+        this.prevOverflowPrio = doc.documentElement.style.getPropertyPriority('overflow');
+        doc.documentElement.style.setProperty('overflow', 'hidden', 'important');
+      }
+      this.root.classList.add('fp-root');
+      this.root.style.setProperty('--cap-scale', String(S.captionScale));
 
       const btn = (name, title, cls, onClick) =>
         h(doc, 'button', { class: cls || null, title, 'aria-label': title, onclick: (e) => { e.stopPropagation(); e.currentTarget.blur(); onClick(); } },
@@ -650,9 +714,9 @@
             this.btnPlay, this.timeEl, h(doc, 'span', { class: 'spacer' }),
             this.btnMute, this.volume, this.btnCC, this.btnFs)));
 
-      doc.body.append(this.stage, this.capEl, ui, this.toastEl);
+      this.root.append(this.stage, this.capEl, ui, this.toastEl);
 
-      // Move the real video element into the PiP window.
+      // Move the real video element into the player.
       this.stage.appendChild(video);
       if (wasPlaying && video.paused) video.play().catch(() => {});
 
@@ -661,13 +725,53 @@
       this.onResize();
       this.captions.set(this.captions.initialState());
       this.showUi();
-      LOG('Document PiP opened', this.auto ? '(auto)' : '');
+      if (this.mode === 'pip') {
+        LOG('Document PiP opened', this.auto ? '(auto)' : '');
+        this.trackPlacement();
+      }
+    }
+
+    // Placement memory (UI helper): move this PiP window to where the user last left one, and keep track of the
+    // monitor it's on so the helper can remember it when the window closes.
+    screenRect() {
+      try {
+        const s = this.win.screen;
+        return { left: s.availLeft, top: s.availTop, width: s.availWidth, height: s.availHeight };
+      } catch (_) { return this.lastScreen || null; }
+    }
+
+    async trackPlacement() {
+      const { win } = this;
+      this.lastScreen = this.screenRect();
+      this.screenTimer = win.setInterval(() => { this.lastScreen = this.screenRect(); }, 1000);
+      const r = await Helper.ask({ fpip: 'pipOpened', remember: S.rememberPlacement }, 3000);
+      if (!r || !r.moved || this.restored) return;
+      // If the remembered monitor is gone, the window ends up on some other screen: put it bottom-right there.
+      // The window's screen info updates a little after the move, so give it up to ~2 s to arrive.
+      const want = r.screen;
+      const same = (a) => a && Math.abs(a.left - want.left) < 2 && Math.abs(a.top - want.top) < 2 &&
+        Math.abs(a.width - want.width) < 2;
+      let tries = 0;
+      const check = () => {
+        if (this.restored) return;
+        const now = this.screenRect();
+        if (same(now)) return;
+        if (++tries < 8) { win.setTimeout(check, 250); return; }
+        LOG('Remembered monitor not available, resetting PiP position');
+        Helper.ask({ fpip: 'pipReset', screen: now });
+      };
+      win.setTimeout(check, 250);
     }
 
     bindEvents() {
       const { win, doc, video } = this;
+      const isPip = this.mode === 'pip';
 
-      this.on(win, 'pagehide', () => this.restore());
+      if (isPip) {
+        this.on(win, 'pagehide', () => this.restore());
+      } else {
+        this.on(win, 'pagehide', () => this.close('navigate'));
+      }
       this.on(win, 'resize', () => this.onResize());
 
       ['play', 'pause', 'ended'].forEach((t) => this.on(video, t, () => this.updatePlay()));
@@ -703,14 +807,15 @@
         this.clickTimer = win.setTimeout(() => { this.clickTimer = 0; this.togglePlay(); }, 230);
       });
 
-      this.on(doc, 'mousemove', () => this.showUi());
+      this.on(doc, 'mousemove', () => this.showUi(), true);
       this.on(doc.documentElement, 'mouseleave', () => {
         win.clearTimeout(this.hideTimer);
         this.hideTimer = win.setTimeout(() => this.hideUi(), 400);
       });
       this.on(doc, 'fullscreenchange', () => this.updateFs());
-      this.on(doc, 'keydown', (e) => this.onKey(e));
-      this.on(doc, 'wheel', (e) => {
+      // In the page overlay, catch keys before the site's own player shortcuts do.
+      this.on(isPip ? doc : win, 'keydown', (e) => this.onKey(e), !isPip);
+      this.on(isPip ? doc : this.root, 'wheel', (e) => {
         e.preventDefault();
         this.setVolume(video.volume + (e.deltaY < 0 ? 0.05 : -0.05));
       }, { passive: false });
@@ -719,6 +824,12 @@
     onKey(e) {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       const v = this.video;
+      if (this.mode === 'window' && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.close('pip');
+        return;
+      }
       switch (e.key) {
         case ' ': case 'k': case 'K': this.togglePlay(); break;
         case 'ArrowLeft': this.seek(-S.seekInterval); break;
@@ -731,6 +842,7 @@
         default: return;
       }
       e.preventDefault();
+      e.stopPropagation();
       this.showUi();
     }
 
@@ -772,47 +884,35 @@
       this.toast(this.captions.on ? 'Captions on' : 'Captions off');
     }
 
-    // Chromium refuses fullscreen inside a document PiP window ("Fullscreen is not supported") and caps the
-    // window at roughly half the screen. So:
-    //  - source tab visible → put the video back in its player and make that truly fullscreen (the click in the
-    //    PiP window carries user activation over to the opener page);
-    //  - source tab hidden  → maximize the PiP window as far as the browser allows; press again to restore.
+    // Chromium refuses fullscreen inside a document PiP window ("Fullscreen is not supported"), even via
+    // chrome.windows, and caps the window at roughly half the screen. So, like Firefox/Yandex, "fullscreen" opens
+    // the video fullscreen on the monitor the PiP window is on: the UI helper moves the tab into its own
+    // fullscreen window there, and the video fills it with these same controls. Pressing it again (or Esc)
+    // sends the tab back where it was and the video drops back into PiP.
+    // Without the helper: maximize the PiP window as far as the browser allows.
     async toggleFullscreen() {
       const { doc, win } = this;
+      if (this.mode === 'window') return this.close('pip');
       if (doc.fullscreenElement) {
         await doc.exitFullscreen().catch(() => {});
         return this.updateFs();
       }
       if (this.maximized) return this.restoreSize();
 
-      if (!document.hidden) {
+      if (await Helper.available()) {
+        const sc = win.screen;
+        const rect = { left: sc.availLeft, top: sc.availTop, width: sc.availWidth, height: sc.availHeight };
         const v = this.video;
         this.close('fullscreen');
-        const target = playerContainer(v);
-        try {
-          await target.requestFullscreen();
-        } catch (e) {
-          LOG('Player fullscreen failed, trying the video element:', e && e.message);
-          try { await v.requestFullscreen(); } catch (e2) { LOG('Video fullscreen failed:', e2 && e2.message); }
-        }
+        PlayerSession.openFullWindow(v, rect);
         return;
-      }
-
-      if (doc.fullscreenEnabled) {
-        try {
-          await doc.documentElement.requestFullscreen({ navigationUI: 'hide' });
-          return this.updateFs();
-        } catch (e) {
-          LOG('Fullscreen refused in PiP window, maximizing instead:', e && e.message);
-        }
       }
 
       this.prevSize = { w: win.outerWidth, h: win.outerHeight };
       try {
-        try { win.moveTo(win.screen.availLeft || 0, win.screen.availTop || 0); } catch (_) { /* usually not allowed */ }
         win.resizeTo(win.screen.availWidth, win.screen.availHeight);
         this.maximized = true;
-        this.toast('Maximized — go back to the tab for real fullscreen');
+        this.toast('Maximized — install the UI helper for real fullscreen');
       } catch (e) {
         this.prevSize = null;
         this.toast('Could not resize the PiP window');
@@ -832,19 +932,19 @@
 
     // —— UI state ——
     showUi() {
-      const { win, doc } = this;
-      doc.body.classList.add('show-ui');
+      const { win } = this;
+      this.root.classList.add('show-ui');
       win.clearTimeout(this.hideTimer);
       this.hideTimer = win.setTimeout(() => this.hideUi(), CONTROLS_HIDE_MS);
     }
 
     hideUi() {
       if (this.video.paused) return;
-      if (this.doc.querySelector('.top:hover, .bottom:hover, .center button:hover')) {
+      if (this.scope.querySelector('.top:hover, .bottom:hover, .center button:hover')) {
         this.hideTimer = this.win.setTimeout(() => this.hideUi(), CONTROLS_HIDE_MS);
         return;
       }
-      this.doc.body.classList.remove('show-ui');
+      this.root.classList.remove('show-ui');
     }
 
     toast(text) {
@@ -868,7 +968,7 @@
       setIcon(this.btnPlay, paused ? 'play' : 'pause');
       setIcon(this.btnBigPlay, paused ? 'play' : 'pause');
       if (paused) {
-        this.doc.body.classList.add('show-ui');
+        this.root.classList.add('show-ui');
         this.win.clearTimeout(this.hideTimer);
       } else {
         this.showUi();
@@ -901,15 +1001,17 @@
     }
 
     updateFs() {
-      const active = !!this.doc.fullscreenElement || this.maximized;
+      const active = this.mode === 'window' || !!this.doc.fullscreenElement || this.maximized;
       setIcon(this.btnFs, active ? 'fullscreenExit' : 'fullscreen');
-      this.btnFs.title = active ? 'Exit fullscreen (F / Esc)' : 'Fullscreen (F / double-click)';
+      this.btnFs.title = this.mode === 'window' ? 'Back to picture-in-picture (F / Esc / double-click)'
+        : active ? 'Restore size (F / double-click)' : 'Fullscreen on this monitor (F / double-click)';
     }
 
     onResize() {
       const { win, doc } = this;
-      doc.body.classList.toggle('compact', win.innerWidth < 340);
-      doc.body.classList.toggle('tiny', win.innerWidth < 240);
+      this.root.classList.toggle('compact', win.innerWidth < 340);
+      this.root.classList.toggle('tiny', win.innerWidth < 240);
+      if (this.mode !== 'pip') return;
       win.clearTimeout(this.sizeTimer);
       this.sizeTimer = win.setTimeout(() => {
         if (this.restored || this.maximized || doc.fullscreenElement) return;
@@ -921,6 +1023,21 @@
     // —— Closing ——
     close(reason) {
       if (this.closeReason === null) this.closeReason = reason;
+      if (this.mode === 'window') {
+        if (this.restored) return;
+        this.restore();
+        // Send the tab back to where it came from. Unless it's "back to tab", it returns as a background tab, so
+        // Chromium's auto-PiP picks the (still playing) video up again.
+        if (this.uiState) {
+          const back = reason === 'back';
+          if (back) Auto.suppressUntil = Date.now() + 2500; // don't flash PiP up while the tab is being activated
+          Helper.ask({ fpip: 'exitFullscreen', ...this.uiState }).then((r) => {
+            if (!r || !r.ok) LOG('UI helper could not move the tab back:', r && r.error);
+            if (back) setTimeout(() => Helper.ask({ fpip: 'activateTab' }), 300);
+          });
+        }
+        return;
+      }
       if (reason === 'back') { try { window.focus(); } catch (_) { /* ignore */ } }
       try { this.win.close(); } catch (_) { /* ignore */ }
       this.restore();
@@ -931,6 +1048,12 @@
       this.restored = true;
       const v = this.video;
       const playing = !v.paused && !v.ended;
+      if (this.mode === 'pip') {
+        if (this.screenTimer) { try { this.win.clearInterval(this.screenTimer); } catch (_) { /* window gone */ } }
+        const cur = this.screenRect();
+        const scr = cur && cur.width > 100 ? cur : this.lastScreen;
+        Helper.ask({ fpip: 'pipClosed', remember: S.rememberPlacement, screen: scr }, 3000);
+      }
 
       this.captions.teardown();
       this.cleanup.forEach((fn) => { try { fn(); } catch (_) { /* ignore */ } });
@@ -944,6 +1067,12 @@
         try { v.pause(); } catch (_) { /* ignore */ }
       }
       this.placeholder.remove();
+      if (this.host) {
+        this.host.remove();
+        const de = document.documentElement.style;
+        if (this.prevOverflow) de.setProperty('overflow', this.prevOverflow, this.prevOverflowPrio);
+        else de.removeProperty('overflow');
+      }
       if (playing && v.paused && v.isConnected) v.play().catch(() => {});
 
       if (session === this) session = null;
@@ -957,7 +1086,7 @@
           setTimeout(() => { if (document.hidden) { try { v.pause(); } catch (_) { /* ignore */ } } }, 300);
         }
       }
-      LOG('Document PiP closed', reason || '(window)');
+      LOG(this.mode === 'pip' ? 'Document PiP closed' : 'Fullscreen window closed', reason || '(window)');
     }
   }
 
@@ -991,7 +1120,7 @@
       Hover.hide();
       if (S.preferDocumentPip && 'documentPictureInPicture' in window) {
         try {
-          await DocPipSession.open(video, auto);
+          await PlayerSession.open(video, auto);
           return true;
         } catch (e) {
           LOG('Document PiP failed, trying native PiP:', e && e.name, e && e.message);
@@ -1018,6 +1147,8 @@
     registered: false,
     unsupported: false,
     nativeAuto: false,
+    suppressUntil: 0,
+    suppressed() { return Date.now() < this.suppressUntil; },
 
     register() {
       if (this.registered || this.unsupported || !S.autoPip || isBlacklisted()) return;
@@ -1041,7 +1172,7 @@
     },
 
     onEnter() {
-      if (!S.autoPip || isBlacklisted() || session || document.pictureInPictureElement) return;
+      if (!S.autoPip || this.suppressed() || isBlacklisted() || session || document.pictureInPictureElement) return;
       const v = findAutoVideo();
       if (v) openPip(v, { auto: true });
     },
@@ -1054,7 +1185,7 @@
         // Fallback for when the mediaSession route is not available. Usually needs a recent user gesture.
         const delay = Math.max(S.autoDelay, this.registered ? 400 : 0);
         setTimeout(() => {
-          if (document.hidden && !session && !opening && !document.pictureInPictureElement && !v.paused) {
+          if (document.hidden && !session && !opening && !this.suppressed() && !document.pictureInPictureElement && !v.paused) {
             openPip(v, { auto: true });
           }
         }, delay);
@@ -1271,6 +1402,7 @@
                 num('autoDelay', 'Fallback delay (ms)'),
                 h(d, 'div', { class: 'title', text: 'PiP window' }),
                 check('preferDocumentPip', 'Enhanced window (captions & fullscreen controls)'),
+                check('rememberPlacement', 'Open PiP where I last left it (any monitor; needs UI helper)'),
                 check('pauseOnClose', 'Pause the video when the PiP window is closed'),
                 check('captionsOnByDefault', 'Turn captions on by default'),
                 num('captionScale', 'Caption size'),

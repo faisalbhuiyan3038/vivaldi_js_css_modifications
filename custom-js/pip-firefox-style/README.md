@@ -7,9 +7,12 @@ Firefox / Yandex-style picture-in-picture for Vivaldi:
 - **Captions toggle (CC)** inside the PiP window:
   - The video's own subtitle tracks (WebVTT `<track>`, HLS subtitles) are shown and hidden directly. This covers kisskh, Vimeo and most HTML5 players. If a site keeps empty placeholder tracks, the mod picks a track that actually has subtitles, in your browser's language when there is one. When PiP closes, the tracks go back to how the site had them.
   - Sites that draw captions as page text and have no subtitle tracks get that text mirrored into the PiP window, the way Firefox does it: YouTube, Netflix, Prime Video and Disney+. On YouTube, CC also turns YouTube's own captions on, and turns them off again when PiP closes.
-- **Fullscreen toggle** (button, `F` or double-click). Chromium doesn't allow fullscreen inside a PiP window ("Fullscreen is not supported") and caps the window at about half the screen, so:
-  - **If you're on the video's tab:** the video goes back into the site's player and that player goes **truly fullscreen**, with the site's own subtitles. Esc leaves fullscreen as usual.
-  - **If you're on another tab:** the PiP window is **maximized** as far as the browser allows (about half the screen). Press `F` or double-click again to restore the size.
+- **Fullscreen on the PiP's monitor** (button, `F` or double-click), like Firefox and Yandex. Move the PiP window to your second monitor, press F, and the video goes fullscreen *on that monitor*; your browsing window on the other monitor isn't touched. You get the same controls and captions as in PiP.
+  - Chromium can't make a PiP window fullscreen, so the UI helper (`pip-window-helper.js`, see Install) moves the video's tab into its own fullscreen window on that monitor.
+  - **F**, **Esc** or a double-click puts the tab back in its original place and the video drops back into PiP.
+  - **Back to tab** returns the tab and switches to it. **X** returns it and pauses the video.
+  - Without the helper, F only maximizes the PiP window, which Chromium caps at about half the screen.
+- **Opens where you last left it, on any monitor**, like Firefox. Drag a PiP window to your second monitor once, and every later PiP opens there, on every site. This includes automatic ones on tab switch and the one that comes back after fullscreen. The helper remembers the monitor, the nearest corner and the size. If that monitor isn't connected, PiP stays on a screen that is. Chromium itself always opens PiP bottom-right on the primary monitor, so the window shows up there for a moment and then jumps to its place. Needs the UI helper; it can be turned off in the settings.
 - Its own controls: play/pause, ±seek, progress bar, volume, back to tab and close. The controls hide automatically.
 - A hover button on videos, like stock Vivaldi. **Right-click it for settings.** `Alt+P` toggles PiP for the best video on the page.
 
@@ -20,9 +23,10 @@ Firefox / Yandex-style picture-in-picture for Vivaldi:
    (for example `%LOCALAPPDATA%\Vivaldi\Application\7.x.xxxx.xx\resources\vivaldi\components\picture-in-picture\`).
 3. **Back up** the original `picture-in-picture.js`.
 4. Replace it with `picture-in-picture.js` from this folder.
-5. Start Vivaldi.
+5. **UI helper, needed for fullscreen on another monitor and for remembering the PiP position:** add `pip-window-helper.js` to Vivaldi's UI like your other `window.html` mods. Copy it next to your other custom JS mods (e.g. `resources\vivaldi\custom-js\`), then add `<script src="custom-js/pip-window-helper.js"></script>` before `</body>` in `window.html`. You can also add it with your mod manager.
+6. Start Vivaldi.
 
-The file gets overwritten when Vivaldi updates, so copy it in again after each update.
+Vivaldi updates overwrite both files, so copy them in again after each update.
 
 ## Flags for automatic PiP on tab switch
 
@@ -46,12 +50,14 @@ Without the flag, the mod falls back to trying PiP on `visibilitychange`. That o
 | ↑ / ↓ / mouse wheel | Volume |
 | M | Mute |
 | C | Captions on/off |
-| F / double-click | Real fullscreen in the tab (if the tab is visible), otherwise maximize / restore the PiP window |
+| F / double-click | Fullscreen on the monitor the PiP window is on; press again to go back to PiP |
+| Esc (in fullscreen) | Back to PiP |
 
 ## Settings (right-click the hover button)
 
 - Auto-PiP on tab switch, close on return, only for videos with sound, fallback delay
 - Enhanced window on/off. Off means native PiP, as before.
+- Open PiP where you last left it (on by default; needs the UI helper)
 - Pause when the PiP window is closed, captions on by default, caption size, seek step
 - Minimum video duration and size for the button and auto-PiP
 - Button position (grid), opacity and toggle shortcut
@@ -65,11 +71,13 @@ Tested on Vivaldi 8.3.4191.35 (Chromium 156), November 2026:
 
 | Site | Manual PiP | Auto-PiP on tab switch / close on return | Captions in PiP | Fullscreen |
 | --- | --- | --- | --- | --- |
-| kisskh.co | ✅ | ✅ | ✅ native subtitles | ✅ real fullscreen in tab; maximize when tab hidden |
+| kisskh.co | ✅ | ✅ | ✅ native subtitles | ✅ fullscreen on monitor 2 from a PiP placed there; keys, captions and all four exits (F, Esc, Back to tab, X) |
 | Vimeo | ✅ | ✅ | ✅ picks the real `<track>` subtitles | ✅ |
 | Twitch (live) | ✅ shows LIVE, no progress bar | ✅ | – stream had no captions | ✅ |
 | Plain HTML5 + WebVTT `<track>` | ✅ | ✅ | ✅ | ✅ |
 | Dailymotion | not tested: the player is behind a sign-up wall in a fresh profile | | | |
+
+Remembered position, tested on two monitors with different scaling: after the PiP was dragged to monitor 2 (a real OS-level window move), it opened there again when reopened manually, from auto-PiP on tab switch, on a different site, and when coming back from fullscreen. Four open/close cycles in a row didn't shift it. A saved position on a monitor that doesn't exist left the PiP on a visible screen.
 
 Vivaldi only injects this script into a page once the page creates a `<video>`. On sites like archive.org, which create the player after you click play, the hover button and Alt+P appear after playback starts.
 
@@ -77,6 +85,7 @@ Vivaldi only injects this script into a page once the page creates a `<video>`. 
 
 - Chromium always draws a thin title bar on document PiP windows, showing the site's origin and Chromium's own back-to-tab button. It sits above the video and doesn't cover it.
 - The mod's own "Back to tab" button puts the video back, switches to its tab and closes PiP.
+- While a video is fullscreen on another monitor, its tab lives in that fullscreen window. Leave with F, Esc or the buttons. Closing that window with Alt+F4 closes the tab, just like closing any window.
 - Caption mirroring depends on each site's markup. YouTube is the most reliable. The other sites are best effort and may break when a site changes its player. Crunchyroll draws subtitles on a canvas, so they can't be mirrored.
 - Videos inside closed shadow DOMs or cross-origin iframes are only handled when the script runs in that frame.
 - Uninstall: put your backed-up original `picture-in-picture.js` back.
